@@ -256,6 +256,8 @@ Item {
     shadowRange: 0,
     shadowColor: "transparent",
     shadowColorInactive: "transparent",
+    shadowPower: 1,
+    roundingPower: 2,
   })
 
   readonly property var decoOptions: [
@@ -263,6 +265,7 @@ Item {
     "general:col.active_border", "general:col.inactive_border",
     "decoration:shadow:enabled", "decoration:shadow:range",
     "decoration:shadow:color", "decoration:shadow:color_inactive",
+    "decoration:shadow:render_power", "decoration:rounding_power",
   ]
 
   Process {
@@ -305,6 +308,8 @@ Item {
       shadowColor: service.colourOf(byName["decoration:shadow:color"]),
       shadowColorInactive: service.colourOf(byName["decoration:shadow:color_inactive"]
                                             || byName["decoration:shadow:color"]),
+      shadowPower: Math.max(1, Math.min(4, num("decoration:shadow:render_power") || 1)),
+      roundingPower: byName["decoration:rounding_power"] ? num("decoration:rounding_power") : 2,
     }
   }
 
