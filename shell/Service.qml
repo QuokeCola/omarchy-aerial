@@ -25,7 +25,14 @@ Item {
   property real t: 0
   // Not "visible": Item declares that FINAL, and shadowing it stops the whole
   // plugin loading with "Cannot override FINAL property".
-  readonly property bool showing: t > 0.001
+  readonly property bool showing: t > 0.001 || service.deskSlide
+
+  // Three fingers sideways on the bare desktop, sliding between workspaces.
+  // The overview is up for it, at no zoom at all: every card standing exactly
+  // on its window, the next desktop's alongside, and the spread slides the
+  // way it does when the overview is open. See `deskSwipe` below for why
+  // this is the plugin's to do rather than Hyprland's.
+  property bool deskSlide: false
   // True once the user has committed: clicks land, keys are grabbed.
   // With a hysteresis: the spring lands with a bounce, and an overview that
   // dipped to 0.98 on the rebound must not drop the keyboard and grab it
@@ -343,13 +350,21 @@ Item {
     lua.running = true
   }
 
-  // Three fingers sideways: Hyprland's workspace swipe while the overview is
-  // closed, sliding the spread between workspaces while it is open. Set to
-  // false to leave sideways swipes alone while it is closed.
-  readonly property bool nativeWorkspaceSwipe: true
+  // Three fingers sideways slide between workspaces, overview open or not.
+  //
+  // Hyprland has a workspace swipe of its own, and it follows the fingers
+  // well enough — but Omarchy turns workspace animations off, so switching
+  // with the keyboard is instant, and that leaves the swipe nothing to finish
+  // with: let go and the desktop snaps, forward or back, from wherever it was.
+  // Turning the animation back on would make every SUPER+number switch slide
+  // too. So the swipe on the desktop is this plugin's, finished with the same
+  // spring as the overview's, and the keyboard is left alone.
+  //
+  // Set to false to leave three fingers sideways alone on the desktop.
+  readonly property bool deskSwipe: true
 
-  readonly property string sideways: service.open ? "slide"
-                                   : (!service.showing && service.nativeWorkspaceSwipe ? "workspace" : "")
+  readonly property string sideways: service.open || service.deskSwipe ? "slide"
+                                   : (!service.showing ? "none" : "")
   property string sidewaysSent: ""
 
   // In an eval of its own, after the gestures exist: if the user already has
@@ -410,18 +425,21 @@ Item {
     const phase = what.slice(dash + 1)
 
     if (who === "side") {
-      // Only means anything with the overview open; otherwise Hyprland's own
-      // workspace swipe has it, and this is a stray from a gesture that began
-      // just as it closed.
       if (phase === "begin" && !service.open) {
-        // And if it reached us at all, Hyprland thinks the slide is still
-        // ours — a shell restarted mid-reload can leave it that way. Hand the
-        // swipe back so the next one switches workspaces again.
-        if (!service.showing) {
+        // Half open or half closed, a sideways swipe means nothing.
+        if (service.showing) return
+        if (!service.deskSwipe) {
+          // It reached us, so Hyprland thinks it is still ours — a shell
+          // restarted mid-reload can leave it that way. Hand it back.
           service.sidewaysSent = ""
           service.sendSideways()
+          return
         }
-        return
+        // On the desktop: put the overview up, at no zoom, to slide.
+        service.deskSlide = true
+        service.aim()
+        service.arming()
+        service.refreshModels()
       }
       service.sideSwipe(phase, raw, velocity || 0, cancelled)
       return
