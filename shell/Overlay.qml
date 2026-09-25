@@ -53,6 +53,13 @@ Scope {
   readonly property real veil: Math.pow(Math.min(1, Math.max(0, root.t)), 0.65)
 
   readonly property string wallpaper: root.service ? root.service.wallpaper : ""
+  readonly property var deco: root.service ? root.service.deco : ({ rounding: 0, border: 0, shadow: false })
+
+  // How far the cards have left the windows they stand in for, for crossfading
+  // Hyprland's look (rounding, border, shadow) into the overview's. Done by
+  // the time the spread is half out, so the windows read as cards, not as
+  // shrinking desktops.
+  readonly property real dress: Math.min(1, Math.max(0, root.t / 0.6))
   readonly property url wallpaperUrl: root.wallpaper ? Qt.resolvedUrl("file://" + root.wallpaper) : ""
 
   // Every thumbnail refreshes off this one clock rather than running live.
@@ -109,6 +116,35 @@ Scope {
         w: rect.w,
         h: rect.h,
       })
+    }
+    return out
+  }
+
+  // Where every window is right now, by address, and how Hyprland is drawing
+  // it. The cards take their resting place from here rather than from the
+  // snapshot: this changes without rebuilding anything, so a window whose
+  // geometry was stale when the swipe began snaps to the truth within a frame
+  // or two, and a closing overview flies each card home to wherever its window
+  // actually is by then.
+  readonly property var geo: {
+    const out = ({})
+    for (const top of (Hyprland.toplevels.values || [])) {
+      const rect = root.rectOf(top)
+      const mon = top.monitor
+      if (!rect || !mon) continue
+      const tags = (top.lastIpcObject || {}).tags || []
+      // Omarchy's default window opacity: 0.985 focused, 0.96 not, for every
+      // window still wearing its tag.
+      const tagged = tags.some(t => String(t).replace(/\*$/, "") === "default-opacity")
+      const active = top.activated === true
+      out[top.address] = {
+        x: rect.x - mon.x,
+        y: rect.y - mon.y,
+        w: rect.w,
+        h: rect.h,
+        active: active,
+        opacity: tagged ? (active ? 0.985 : 0.96) : 1,
+      }
     }
     return out
   }

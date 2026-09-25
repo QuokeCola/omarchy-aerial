@@ -48,6 +48,26 @@ PanelWindow {
   // How much it is dimmed, so windows and captions read against any wallpaper.
   readonly property real dim: 0.5
 
+  // The part of the screen windows live in: all of it, less what the bar and
+  // anything else exclusive has reserved. Hyprland reports that as
+  // [left, top, right, bottom].
+  readonly property var reserved: {
+    const r = surface.monitor && surface.monitor.lastIpcObject ? surface.monitor.lastIpcObject.reserved : null
+    // A list from C++, which is not a JS Array as far as isArray is concerned.
+    if (!r || r.length !== 4) return [0, 0, 0, 0]
+    return [Number(r[0]) || 0, Number(r[1]) || 0, Number(r[2]) || 0, Number(r[3]) || 0]
+  }
+
+  // Every card on screen has its first frame. Until then the desktop behind
+  // must stay visible, or a window whose capture is late blinks out.
+  readonly property bool captured: {
+    for (let i = 0; i < cards.count; i++) {
+      const card = cards.itemAt(i)
+      if (card && card.waiting) return false
+    }
+    return true
+  }
+
   readonly property real pixelRatio: surface.screenInfo && surface.screenInfo.devicePixelRatio > 0
                                      ? surface.screenInfo.devicePixelRatio : 1
 
@@ -238,24 +258,29 @@ PanelWindow {
 
     // The desktop goes away: the windows you are about to see spread out are
     // still sitting there underneath, and two of everything reads as a mess.
-    // What replaces them is the wallpaper they were covering.
     //
-    // Loaded at the screen's real resolution and blurred properly. It used to
-    // be loaded 320 pixels wide and stretched, which is cheap but reads as a
-    // low-resolution wallpaper rather than a soft one. The blur is drawn into
-    // a layer once; the wallpaper does not change while the overview is open,
-    // so fading it in and out, and everything moving over it, reuse the same
-    // texture instead of blurring again every frame.
+    // So from the very first frame the part of the screen windows live in is
+    // painted over with the wallpaper exactly as the desktop draws it — same
+    // image, same crop — and the cards, standing exactly where their windows
+    // are and dressed the way Hyprland dresses them, take the windows' place.
+    // Nothing fades: the desktop you were looking at simply becomes the
+    // overview, and only then starts to move. The bar's strip is left to fade,
+    // since there is no card standing in for the bar.
+    //
+    // Then the blur comes in over it. Loaded at the screen's real resolution
+    // and blurred properly, into a layer drawn once, since the wallpaper does
+    // not change while the overview is open.
     Item {
       anchors.fill: parent
       visible: overlay.wallpaper !== ""
-      opacity: overlay.veil
 
+      // One image, decoded once: the three below share it through the image
+      // cache, since source and size are the same.
       Image {
         id: wall
         anchors.fill: parent
+        visible: false
         source: overlay.wallpaperUrl
-        visible: surface.blur <= 0
         fillMode: Image.PreserveAspectCrop
         sourceSize.width: Math.ceil(surface.width * surface.pixelRatio)
         sourceSize.height: Math.ceil(surface.height * surface.pixelRatio)
@@ -264,10 +289,49 @@ PanelWindow {
         cache: true
       }
 
+      // The whole screen, bar strip included, fading with the swipe.
+      Image {
+        anchors.fill: parent
+        source: wall.source
+        opacity: overlay.veil
+        fillMode: wall.fillMode
+        sourceSize: wall.sourceSize
+        smooth: true
+        asynchronous: true
+        cache: true
+      }
+
+      // Where the windows are: solid from the first frame, as soon as every
+      // card is ready to stand in for its window.
+      Item {
+        id: workArea
+        x: surface.reserved[0]
+        y: surface.reserved[1]
+        width: surface.width - surface.reserved[0] - surface.reserved[2]
+        height: surface.height - surface.reserved[1] - surface.reserved[3]
+        clip: true
+        opacity: overlay.opened && surface.captured && solid.status === Image.Ready ? 1 : overlay.veil
+
+        Image {
+          id: solid
+          x: -workArea.x
+          y: -workArea.y
+          width: surface.width
+          height: surface.height
+          source: wall.source
+          fillMode: wall.fillMode
+          sourceSize: wall.sourceSize
+          smooth: true
+          asynchronous: true
+          cache: true
+        }
+      }
+
       MultiEffect {
         anchors.fill: parent
         source: wall
         visible: surface.blur > 0
+        opacity: overlay.veil
         blurEnabled: true
         blur: 1
         blurMax: Math.round(64 * surface.blur)
@@ -464,11 +528,18 @@ PanelWindow {
 
     // ------------------------------------------------------------ the windows
     Repeater {
+      id: cards
       model: surface.monitorWindows
 
       delegate: Item {
         id: card
         required property var modelData
+        // Where the window really is right now, which can be fresher than the
+        // snapshot the card was built from.
+        readonly property var real: overlay.geo[card.modelData.key] || card.modelData
+        readonly property bool focusedWindow: card.real.active === true
+        // Shown, but nothing captured to show yet.
+        readonly property bool waiting: card.shown && !shot.hasContent
         readonly property var slot: surface.slots[card.modelData.key] || null
         // On the desktop being shown, which peeking changes without rebuilding
         // anything: the card is already here, it just fades in.
@@ -489,13 +560,13 @@ PanelWindow {
 
         // The whole animation: where it is, blended with where it goes — plus
         // however far it has been dragged since it was picked up.
-        x: (card.slot ? card.modelData.x + (card.slot.x - card.modelData.x) * overlay.t : card.modelData.x)
+        x: (card.slot ? card.real.x + (card.slot.x - card.real.x) * overlay.t : card.real.x)
            + card.shift
            + (card.dragging ? dragger.activeTranslation.x : 0)
-        y: (card.slot ? card.modelData.y + (card.slot.y - card.modelData.y) * overlay.t : card.modelData.y)
+        y: (card.slot ? card.real.y + (card.slot.y - card.real.y) * overlay.t : card.real.y)
            + (card.dragging ? dragger.activeTranslation.y : 0)
-        width: card.slot ? card.modelData.w + (card.slot.w - card.modelData.w) * overlay.t : card.modelData.w
-        height: card.slot ? card.modelData.h + (card.slot.h - card.modelData.h) * overlay.t : card.modelData.h
+        width: card.slot ? card.real.w + (card.slot.w - card.real.w) * overlay.t : card.real.w
+        height: card.slot ? card.real.h + (card.slot.h - card.real.h) * overlay.t : card.real.h
 
         Behavior on x { enabled: overlay.active && !card.dragging && !overlay.moving; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on y { enabled: overlay.active && !card.dragging; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
@@ -506,8 +577,11 @@ PanelWindow {
         // Held, it shrinks the way a thing you have picked up does — and
         // shrinks further over somewhere it would land, so it stops covering
         // what it is about to drop into.
+        // Grown under the pointer only once the overview is open. The window
+        // you were using starts out selected, and growing it from the first
+        // frame made it the one card that did not match its window.
         scale: card.dragging ? (overlay.dragTarget > 0 || overlay.dropOnKey !== "" ? 0.4 : 0.82)
-             : (card.picked ? 1.035 : 1)
+             : (card.picked && overlay.active ? 1.035 : 1)
         opacity: card.shown ? (card.dragging ? 0.94 : 1) : 0
         visible: card.opacity > 0.01
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
@@ -515,12 +589,41 @@ PanelWindow {
         // that is still dissolving as it goes reads as lag.
         Behavior on opacity { enabled: !surface.sliding; NumberAnimation { duration: 150 } }
 
-        readonly property real radius: 14 * overlay.veil
+        // Hyprland's rounding on the desktop, the overview's own once spread.
+        readonly property real radius: overlay.deco.rounding + (14 - overlay.deco.rounding) * overlay.dress
+
+        // Hyprland's shadow and border, which the card wears while it still
+        // stands in for the window, and sheds as it becomes a card.
+        RectangularShadow {
+          z: -1
+          anchors.fill: parent
+          anchors.margins: -overlay.deco.border
+          radius: card.radius + overlay.deco.border
+          blur: overlay.deco.shadowRange
+          spread: 0
+          color: card.focusedWindow ? overlay.deco.shadowColor : overlay.deco.shadowColorInactive
+          opacity: 1 - overlay.dress
+          visible: overlay.deco.shadow && overlay.deco.shadowRange > 0 && opacity > 0.01 && !card.dragging
+        }
+
+        Rectangle {
+          z: -1
+          anchors.fill: parent
+          anchors.margins: -overlay.deco.border
+          radius: card.radius + overlay.deco.border
+          color: "transparent"
+          border.width: overlay.deco.border
+          border.color: card.focusedWindow ? overlay.deco.activeBorder : overlay.deco.inactiveBorder
+          opacity: 1 - overlay.dress
+          visible: overlay.deco.border > 0 && opacity > 0.01 && !card.dragging
+        }
 
         ClippingRectangle {
           id: frame
           anchors.fill: parent
           radius: card.radius
+          // As see-through as Hyprland draws the window, becoming solid.
+          opacity: card.real.opacity + (1 - card.real.opacity) * overlay.dress
           // Under the capture, so a window whose first frame has not arrived
           // yet reads as a tile and not as a hole — but only as the overview
           // comes in. At the start of a swipe the card sits exactly on its
@@ -566,7 +669,7 @@ PanelWindow {
           color: "transparent"
           border.width: card.landing ? 3 : (card.picked ? 3 : 1)
           border.color: card.landing ? "#F2EFE7" : (card.picked ? Color.accent : Qt.rgba(1, 1, 1, 0.14))
-          opacity: overlay.veil
+          opacity: overlay.dress
         }
 
         HoverHandler {

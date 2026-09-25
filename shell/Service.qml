@@ -199,6 +199,78 @@ Item {
     service.everything = false
   }
 
+  // ------------------------------------------------------------ decoration
+
+  // How Hyprland dresses a window: its rounding, border and shadow. At the
+  // start of a swipe every card sits exactly on top of its window, and the
+  // desktop behind has already been painted over, so a card has to look like
+  // the window it stands in for — not like a square screenshot of its
+  // contents — or the first frame of every swipe is a visible jump.
+  property var deco: ({
+    rounding: 0,
+    border: 0,
+    activeBorder: "transparent",
+    inactiveBorder: "transparent",
+    shadow: false,
+    shadowRange: 0,
+    shadowColor: "transparent",
+    shadowColorInactive: "transparent",
+  })
+
+  readonly property var decoOptions: [
+    "decoration:rounding", "general:border_size",
+    "general:col.active_border", "general:col.inactive_border",
+    "decoration:shadow:enabled", "decoration:shadow:range",
+    "decoration:shadow:color", "decoration:shadow:color_inactive",
+  ]
+
+  Process {
+    id: readDeco
+    command: ["/usr/bin/hyprctl", "--batch",
+              service.decoOptions.map(o => "j/getoption " + o).join("; ")]
+    stdout: StdioCollector {
+      onStreamFinished: service.takeDeco(text)
+    }
+  }
+
+  // Hyprland prints colours as AARRGGBB, which is what Qt reads after a "#".
+  // A gradient is a list of them and an angle; the first colour stands for it.
+  function colourOf(entry) {
+    const raw = entry && (entry.gradient || entry.color || entry.str)
+    const hex = String(raw || "").trim().split(/\s+/)[0]
+    return /^[0-9a-fA-F]{8}$/.test(hex) ? "#" + hex : "transparent"
+  }
+
+  function takeDeco(text) {
+    const byName = ({})
+    for (const chunk of String(text).split(/\n\s*\n/)) {
+      try {
+        const entry = JSON.parse(chunk)
+        if (entry && entry.option) byName[entry.option] = entry
+      } catch (e) {}
+    }
+    const num = name => {
+      const e = byName[name]
+      return e ? Number(e.int !== undefined ? e.int : (e.float !== undefined ? e.float : 0)) : 0
+    }
+    const shadowOn = byName["decoration:shadow:enabled"]
+    service.deco = {
+      rounding: Math.max(0, num("decoration:rounding")),
+      border: Math.max(0, num("general:border_size")),
+      activeBorder: service.colourOf(byName["general:col.active_border"]),
+      inactiveBorder: service.colourOf(byName["general:col.inactive_border"]),
+      shadow: !!(shadowOn && (shadowOn.bool === true || shadowOn.int === 1)),
+      shadowRange: Math.max(0, num("decoration:shadow:range")),
+      shadowColor: service.colourOf(byName["decoration:shadow:color"]),
+      shadowColorInactive: service.colourOf(byName["decoration:shadow:color_inactive"]
+                                            || byName["decoration:shadow:color"]),
+    }
+  }
+
+  function readDecoration() {
+    if (!readDeco.running) readDeco.running = true
+  }
+
   function registerGesture() {
     const path = service.gestureFile.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
     lua.command = ["/usr/bin/hyprctl", "eval", 'dofile("' + path + '")']
@@ -298,6 +370,11 @@ Item {
         service.everything = wantsEverything
         service.aim()
         service.arming()
+        // The snapshot above is what the cards are built from; where each
+        // window really is right now arrives a few milliseconds later and the
+        // cards follow it, so a window resized since the last event starts
+        // the swipe at its true size.
+        service.refreshModels()
       } else {
         // Swiping down puts the overview away from anywhere it is visible,
         // including halfway through opening. On the bare desktop the gesture
@@ -386,6 +463,7 @@ Item {
       if (name === "configreloaded") {
         // A reload drops runtime gestures the same way it drops runtime binds.
         rearm.restart()
+        service.readDecoration()
         return
       }
 
@@ -419,5 +497,6 @@ Item {
   Component.onCompleted: {
     service.registerGesture()
     service.findTheWallpaper()
+    service.readDecoration()
   }
 }
