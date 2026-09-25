@@ -229,6 +229,9 @@ Item {
     shadowRange: 0,
     shadowColor: "transparent",
     shadowColorInactive: "transparent",
+    blur: false,
+    blurSize: 0,
+    blurPasses: 0,
   })
 
   readonly property var decoOptions: [
@@ -236,6 +239,7 @@ Item {
     "general:col.active_border", "general:col.inactive_border",
     "decoration:shadow:enabled", "decoration:shadow:range",
     "decoration:shadow:color", "decoration:shadow:color_inactive",
+    "decoration:blur:enabled", "decoration:blur:size", "decoration:blur:passes",
   ]
 
   Process {
@@ -268,6 +272,7 @@ Item {
       return e ? Number(e.int !== undefined ? e.int : (e.float !== undefined ? e.float : 0)) : 0
     }
     const shadowOn = byName["decoration:shadow:enabled"]
+    const blurOn = byName["decoration:blur:enabled"]
     service.deco = {
       rounding: Math.max(0, num("decoration:rounding")),
       border: Math.max(0, num("general:border_size")),
@@ -278,6 +283,9 @@ Item {
       shadowColor: service.colourOf(byName["decoration:shadow:color"]),
       shadowColorInactive: service.colourOf(byName["decoration:shadow:color_inactive"]
                                             || byName["decoration:shadow:color"]),
+      blur: !!(blurOn && (blurOn.bool === true || blurOn.int === 1)),
+      blurSize: Math.max(0, num("decoration:blur:size")),
+      blurPasses: Math.max(0, num("decoration:blur:passes")),
     }
   }
 

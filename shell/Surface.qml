@@ -48,6 +48,21 @@ PanelWindow {
   // How much it is darkened behind the spread, 0 to 1. At 0 it is not.
   readonly property real dim: 0
 
+  // Frosted windows. A terminal drawn partly see-through, with the compositor
+  // blurring what is behind it, captures as see-through and nothing more: the
+  // blur is the compositor's, not the window's. So behind every card sits the
+  // piece of a blurred wallpaper that the card is over, and a frosted window
+  // stays frosted all the way into the spread.
+  //
+  // The blur itself is drawn once. What each card redraws as it moves is only
+  // its own piece of that, which is why this is affordable at all; it is
+  // still one more texture per card per frame, so turn it off on a machine
+  // that struggles.
+  readonly property bool glass: overlay.deco.blur !== false
+  // Hyprland's blur of `size` over `passes` reaches roughly this far.
+  readonly property int frostRadius: Math.max(8, Math.min(64,
+    Math.round((overlay.deco.blurSize || 8) * Math.pow(2, Math.max(0, (overlay.deco.blurPasses || 1) - 1)) / 1.5)))
+
   // The part of the screen windows live in: all of it, less what the bar and
   // anything else exclusive has reserved. Hyprland reports that as
   // [left, top, right, bottom].
@@ -325,6 +340,20 @@ PanelWindow {
           asynchronous: true
           cache: true
         }
+      }
+
+      // The frosted wallpaper the cards take their backgrounds from. Never
+      // drawn itself; each card draws the piece of it it is over.
+      MultiEffect {
+        id: frost
+        anchors.fill: parent
+        source: wall
+        visible: false
+        blurEnabled: surface.glass
+        blur: 1
+        blurMax: surface.frostRadius
+        autoPaddingEnabled: false
+        layer.enabled: surface.glass
       }
 
       MultiEffect {
@@ -644,6 +673,16 @@ PanelWindow {
           // real window, which is still showing, so an empty card should let
           // that window through rather than flash a dark block over it.
           color: shot.hasContent ? "#101014" : Qt.rgba(0.063, 0.063, 0.078, overlay.veil)
+
+          // What the compositor would have blurred behind this window, from
+          // wherever the card now is.
+          ShaderEffectSource {
+            anchors.fill: parent
+            visible: surface.glass && overlay.wallpaper !== "" && shot.hasContent
+            sourceItem: frost
+            sourceRect: Qt.rect(card.x, card.y, Math.max(1, card.width), Math.max(1, card.height))
+            recursive: false
+          }
 
           ScreencopyView {
             id: shot
