@@ -46,6 +46,13 @@ Item {
   // snapshot of the windows on a frame where nothing is moving yet.
   signal arming()
 
+  // Three fingers sideways while the overview is open. The overlay owns the
+  // workspaces, so it decides what a sideways swipe means; this only relays it.
+  // `phase` is "begin", "move" or "end"; `value` is how many workspaces the
+  // fingers have travelled, positive toward the next; `velocity` is the same
+  // per second.
+  signal sideSwipe(string phase, real value, real velocity, bool cancelled)
+
   // ---------------------------------------------------------------- opening
 
   function aim() {
@@ -84,18 +91,44 @@ Item {
     service.glideTo(false, 0)
   }
 
+  // Past fully open the overview gives a little rather than stopping dead
+  // under the fingers, and settles back when they lift.
+  readonly property real stretch: 0.05
+  function rubber(value) {
+    if (value <= 1) return value
+    return 1 + service.stretch * (1 - Math.exp(-(value - 1) / service.stretch))
+  }
+
   function toggle() { service.t > 0.5 ? service.hide() : service.show() }
 
-  // Animate the rest of the way, carrying whatever speed the fingers had. A
-  // swipe let go at the halfway mark takes its time; one thrown is already
-  // moving, so finishing it slowly would feel like the desktop caught it.
-  function glideTo(wantOpen, speed) {
+  // Animate the rest of the way. Let go of a swipe and it carries on at the
+  // speed your fingers left it with (`velocity`, in `t` per second), so there
+  // is no seam between following the hand and finishing on its own. Opened by
+  // a key or a click there is no hand to carry on from, and it eases instead.
+  function glideTo(wantOpen, speed, velocity) {
     const target = wantOpen ? 1 : 0
+    opener.stop()
+    tSpring.stop()
+    if (velocity !== undefined) {
+      tSpring.launch(service.t, target, velocity)
+      return
+    }
     const remaining = Math.abs(target - service.t)
     const haste = 1 + Math.min(3, Math.max(0, speed || 0))
     opener.to = target
     opener.duration = Math.max(90, Math.round(260 * remaining / haste))
     opener.restart()
+  }
+
+  function stopGliding() {
+    opener.stop()
+    tSpring.stop()
+  }
+
+  Spring {
+    id: tSpring
+    onValueChanged: if (tSpring.running) service.t = tSpring.value
+    onSettled: service.t = tSpring.target
   }
 
   NumberAnimation {
@@ -113,7 +146,15 @@ Item {
     return url.startsWith("file://") ? url.slice(7) : url
   }
 
-  Process { id: lua }
+  Process {
+    id: lua
+    // Registering the gestures resets nothing sideways, but a fresh Lua state
+    // after a config reload has nothing registered at all: say it again.
+    onRunningChanged: if (!running) {
+      service.sidewaysSent = ""
+      service.sendSideways()
+    }
+  }
 
   // The desktop's own wallpaper, which the overview sits on and every workspace
   // tile is a small picture of. Omarchy keeps it behind a symlink that moves
@@ -164,6 +205,34 @@ Item {
     lua.running = true
   }
 
+  // Three fingers sideways: Hyprland's workspace swipe while the overview is
+  // closed, sliding the spread between workspaces while it is open. Set to
+  // false to leave sideways swipes alone while it is closed.
+  readonly property bool nativeWorkspaceSwipe: true
+
+  readonly property string sideways: service.open ? "slide"
+                                   : (!service.showing && service.nativeWorkspaceSwipe ? "workspace" : "")
+  property string sidewaysSent: ""
+
+  // In an eval of its own, after the gestures exist: if the user already has
+  // a horizontal swipe, Hyprland refuses ours and that refusal must not take
+  // the up and down gestures with it.
+  Process {
+    id: sidewaysLua
+    onRunningChanged: if (!running && service.sidewaysSent !== service.sideways) service.sendSideways()
+  }
+
+  function sendSideways() {
+    if (lua.running || sidewaysLua.running) return
+    const mode = service.sideways
+    if (mode === "") return   // in between: keep whatever is there
+    service.sidewaysSent = mode
+    sidewaysLua.command = ["/usr/bin/hyprctl", "eval", '__aerial_horizontal("' + mode + '")']
+    sidewaysLua.running = true
+  }
+
+  onSidewaysChanged: service.sendSideways()
+
   // A swipe shorter than this cannot open the overview however fast it was:
   // a flick has to be deliberate, not a brush against the pad.
   readonly property real flickFloor: 0.08
@@ -181,9 +250,13 @@ Item {
     const what = cut < 0 ? data : data.slice(0, cut)
     const rest = cut < 0 ? "" : data.slice(cut + 1)
     const parts = rest.split(":")
-    const value = Math.max(0, Math.min(1, parseFloat(parts[0]) || 0))
+    const raw = parseFloat(parts[0]) || 0
+    const value = Math.max(0, raw)
     const speed = parseFloat(parts[1]) || 0
     const cancelled = parts[2] === "1"
+    // Along the swipe, in progress per second. Older gesture halves did not
+    // send it, and then there is nothing to carry on from.
+    const velocity = parts.length > 3 ? (parseFloat(parts[3]) || 0) : undefined
 
     if (what === "shape") {
       // Only ever sent when the Lua half could not find the movement in what
@@ -197,6 +270,15 @@ Item {
     if (dash < 0) return
     const who = what.slice(0, dash)
     const phase = what.slice(dash + 1)
+
+    if (who === "side") {
+      // Only means anything with the overview open; otherwise Hyprland's own
+      // workspace swipe has it, and this is a stray from a gesture that began
+      // just as it closed.
+      if (phase === "begin" && !service.open) return
+      service.sideSwipe(phase, raw, velocity || 0, cancelled)
+      return
+    }
     const opening = who === "up" || who === "allup"
     const wantsEverything = who === "allup" || who === "alldown"
 
@@ -214,7 +296,7 @@ Item {
         if (service.t < 0.05) return
       }
       settle.stop()
-      opener.stop()
+      service.stopGliding()
       service.scrubFrom = service.t
       service.scrub = who
       break
@@ -222,8 +304,8 @@ Item {
     case "move":
       if (service.scrub !== who) return
       service.t = opening
-        ? service.scrubFrom + (1 - service.scrubFrom) * value
-        : service.scrubFrom * (1 - value)
+        ? service.rubber(service.scrubFrom + (1 - service.scrubFrom) * value)
+        : service.scrubFrom * (1 - Math.min(1, value))
       break
 
     case "end":
@@ -231,9 +313,26 @@ Item {
       service.scrub = ""
       // Judged on where it ended up, not on the swipe alone, so a gesture that
       // carried on from a half-open overview is measured from what you saw.
-      if (cancelled) service.glideTo(service.t > 0.5, 0)
-      else if (opening) service.glideTo(service.t > 0.5 || service.flicked(value, speed), speed)
-      else service.glideTo(!(service.t < 0.5 || service.flicked(value, speed)), speed)
+      //
+      // The speed carried into the glide is the fingers' speed turned into
+      // `t`'s, and only when it points where the overview is going: flicked
+      // open and let go it keeps moving, but a swipe that reverses and gets
+      // dropped does not fling the overview the wrong way first.
+      {
+        let wantOpen
+        if (cancelled) wantOpen = service.t > 0.5
+        else if (opening) wantOpen = service.t > 0.5 || service.flicked(value, speed)
+        else wantOpen = !(service.t < 0.5 || service.flicked(value, speed))
+
+        let carry = undefined
+        if (velocity !== undefined && !cancelled) {
+          const scale = opening ? (1 - service.scrubFrom) : -service.scrubFrom
+          carry = velocity * scale
+          if ((wantOpen ? 1 : -1) * carry < 0) carry = 0
+          carry = Math.max(-12, Math.min(12, carry))
+        }
+        service.glideTo(wantOpen, speed, carry)
+      }
       break
 
     default:

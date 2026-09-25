@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
@@ -41,12 +42,27 @@ PanelWindow {
   readonly property var monitor: (Hyprland.monitors.values || []).find(m => m.name === surface.monitorName) || null
   readonly property bool leading: surface.monitorName === overlay.leadMonitor
 
+  // How soft the wallpaper behind the spread is, 0 to 1. At 0 it is the
+  // wallpaper itself, sharp, only dimmed.
+  readonly property real blur: 0.55
+  // How much it is dimmed, so windows and captions read against any wallpaper.
+  readonly property real dim: 0.5
+
+  readonly property real pixelRatio: surface.screenInfo && surface.screenInfo.devicePixelRatio > 0
+                                     ? surface.screenInfo.devicePixelRatio : 1
+
   // Which workspace this screen is showing. Peeking at a tile swaps it without
   // going there.
   readonly property int shownWorkspace: {
     if (surface.leading && overlay.peek > 0) return overlay.peek
+    if (surface.leading && overlay.stageWorkspace > 0) return overlay.stageWorkspace
     return surface.monitor && surface.monitor.activeWorkspace ? surface.monitor.activeWorkspace.id : -1
   }
+
+  // Sliding between workspaces moves every desktop's spread sideways together,
+  // so this screen is a window onto a row of them.
+  readonly property bool sliding: surface.leading && overlay.moving
+                                  && !overlay.everything && !surface.searching
 
   // Every window on this screen, whichever desktop it is on. This is what the
   // cards are built from, and it deliberately does not depend on which
@@ -222,25 +238,48 @@ PanelWindow {
 
     // The desktop goes away: the windows you are about to see spread out are
     // still sitting there underneath, and two of everything reads as a mess.
-    // What replaces them is the wallpaper they were covering, softened — loaded
-    // small and drawn large, which is a blur that costs nothing per frame,
-    // unlike asking the compositor for one.
-    Image {
+    // What replaces them is the wallpaper they were covering.
+    //
+    // Loaded at the screen's real resolution and blurred properly. It used to
+    // be loaded 320 pixels wide and stretched, which is cheap but reads as a
+    // low-resolution wallpaper rather than a soft one. The blur is drawn into
+    // a layer once; the wallpaper does not change while the overview is open,
+    // so fading it in and out, and everything moving over it, reuse the same
+    // texture instead of blurring again every frame.
+    Item {
       anchors.fill: parent
-      source: overlay.wallpaperUrl
       visible: overlay.wallpaper !== ""
       opacity: overlay.veil
-      fillMode: Image.PreserveAspectCrop
-      sourceSize.width: 320
-      smooth: true
-      asynchronous: true
-      cache: true
+
+      Image {
+        id: wall
+        anchors.fill: parent
+        source: overlay.wallpaperUrl
+        visible: surface.blur <= 0
+        fillMode: Image.PreserveAspectCrop
+        sourceSize.width: Math.ceil(surface.width * surface.pixelRatio)
+        sourceSize.height: Math.ceil(surface.height * surface.pixelRatio)
+        smooth: true
+        asynchronous: true
+        cache: true
+      }
+
+      MultiEffect {
+        anchors.fill: parent
+        source: wall
+        visible: surface.blur > 0
+        blurEnabled: true
+        blur: 1
+        blurMax: Math.round(64 * surface.blur)
+        autoPaddingEnabled: false
+        layer.enabled: true
+      }
     }
 
     Rectangle {
       anchors.fill: parent
       color: "#07070A"
-      opacity: (overlay.wallpaper === "" ? 0.93 : 0.74) * overlay.veil
+      opacity: (overlay.wallpaper === "" ? 0.93 : surface.dim) * overlay.veil
     }
 
     MouseArea {
@@ -264,7 +303,9 @@ PanelWindow {
           id: space
           required property var modelData
           required property int index
-          readonly property bool focused: space.modelData.focused
+          // The desktop the spread is showing, which sliding moves before the
+          // compositor has caught up.
+          readonly property bool focused: space.modelData.id === overlay.stageWorkspace
           readonly property bool targeted: overlay.dragTarget === space.modelData.id
           readonly property bool peeked: overlay.peek === space.modelData.id
           readonly property var plan: overlay.plans[space.modelData.id] || []
@@ -290,7 +331,7 @@ PanelWindow {
               source: overlay.wallpaperUrl
               visible: overlay.wallpaper !== ""
               fillMode: Image.PreserveAspectCrop
-              sourceSize.width: 200
+              sourceSize.width: Math.ceil(surface.tileWidth * surface.pixelRatio * 1.5)
               smooth: true
               asynchronous: true
               cache: true
@@ -351,9 +392,10 @@ PanelWindow {
             anchors.fill: parent
             radius: tile.radius
             color: "transparent"
-            border.width: space.targeted || space.focused || space.peeked ? 2 : 1
+            // The accent ring for the current desktop is drawn once, below,
+            // so it can travel between tiles as you slide.
+            border.width: space.targeted || space.peeked ? 2 : 1
             border.color: space.targeted ? "#F2EFE7"
-                        : space.focused ? Color.accent
                         : space.peeked ? Qt.rgba(1, 1, 1, 0.5)
                         : Qt.rgba(1, 1, 1, 0.14)
           }
@@ -383,6 +425,21 @@ PanelWindow {
             onTapped: overlay.goToWorkspace(space.modelData.id)
           }
         }
+      }
+
+      // Where you are, as one ring that slides along the strip with your
+      // fingers rather than jumping from tile to tile when you let go.
+      Rectangle {
+        visible: overlay.stageIndex >= 0
+        x: surface.tileX(Math.max(0, overlay.stageIndex + overlay.slide))
+        y: surface.tileTop
+        width: surface.tileWidth
+        height: surface.tileHeight
+        radius: 8
+        color: "transparent"
+        border.width: 2
+        border.color: Color.accent
+        Behavior on x { enabled: !overlay.moving; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
       }
     }
 
@@ -416,7 +473,11 @@ PanelWindow {
         // On the desktop being shown, which peeking changes without rebuilding
         // anything: the card is already here, it just fades in.
         readonly property bool here: overlay.everything || surface.searching
-                                     || card.modelData.workspace === surface.shownWorkspace
+                                     || (surface.sliding ? Math.abs(card.lane) < 1
+                                                         : card.modelData.workspace === surface.shownWorkspace)
+        // How many screens over this card's desktop is while sliding.
+        readonly property real lane: surface.leading ? overlay.laneOf(card.modelData.workspace) : 0
+        readonly property real shift: surface.sliding ? card.lane * surface.width : 0
         readonly property bool shown: card.here && overlay.matches(card.modelData)
         readonly property bool hovered: hover.hovered && overlay.active
         readonly property bool picked: card.hovered || overlay.selectedKey === card.modelData.key
@@ -429,13 +490,14 @@ PanelWindow {
         // The whole animation: where it is, blended with where it goes — plus
         // however far it has been dragged since it was picked up.
         x: (card.slot ? card.modelData.x + (card.slot.x - card.modelData.x) * overlay.t : card.modelData.x)
+           + card.shift
            + (card.dragging ? dragger.activeTranslation.x : 0)
         y: (card.slot ? card.modelData.y + (card.slot.y - card.modelData.y) * overlay.t : card.modelData.y)
            + (card.dragging ? dragger.activeTranslation.y : 0)
         width: card.slot ? card.modelData.w + (card.slot.w - card.modelData.w) * overlay.t : card.modelData.w
         height: card.slot ? card.modelData.h + (card.slot.h - card.modelData.h) * overlay.t : card.modelData.h
 
-        Behavior on x { enabled: overlay.active && !card.dragging; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        Behavior on x { enabled: overlay.active && !card.dragging && !overlay.moving; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on y { enabled: overlay.active && !card.dragging; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on width { enabled: overlay.active && !card.dragging; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on height { enabled: overlay.active && !card.dragging; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
@@ -449,7 +511,9 @@ PanelWindow {
         opacity: card.shown ? (card.dragging ? 0.94 : 1) : 0
         visible: card.opacity > 0.01
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-        Behavior on opacity { NumberAnimation { duration: 150 } }
+        // Sliding carries a desktop off the screen rather than fading it: one
+        // that is still dissolving as it goes reads as lag.
+        Behavior on opacity { enabled: !surface.sliding; NumberAnimation { duration: 150 } }
 
         readonly property real radius: 14 * overlay.veil
 
@@ -639,6 +703,29 @@ PanelWindow {
             }
           }
         }
+      }
+    }
+
+    // ------------------------------------------------------ an empty desktop
+    // Says so, and slides with the rest, so a desktop with nothing on it
+    // arrives as a place rather than as a gap.
+    Repeater {
+      model: surface.leading ? overlay.lanes : []
+
+      delegate: Text {
+        id: nothing
+        required property var modelData
+        readonly property real lane: overlay.laneOf(nothing.modelData)
+        textFormat: Text.PlainText
+        visible: overlay.active && !overlay.everything && !surface.searching && overlay.peek <= 0
+                 && Math.abs(nothing.lane) < 1
+                 && !surface.monitorWindows.some(w => w.workspace === nothing.modelData)
+        x: (surface.width - nothing.width) / 2 + nothing.lane * surface.width
+        y: surface.stripHeight + (surface.height - surface.stripHeight - nothing.height) / 2
+        text: "No windows on " + nothing.modelData
+        color: Qt.rgba(1, 1, 1, 0.42)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.body
       }
     }
 

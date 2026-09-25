@@ -181,6 +181,7 @@ Scope {
     root.shot = root.liveShot
     root.workspaces = root.liveWorkspaces
     root.plans = root.livePlans
+    if (root.stageId <= 0 && Hyprland.focusedWorkspace) root.stageId = Hyprland.focusedWorkspace.id
 
     // Start on the window you were already using, so pressing enter straight
     // away puts you back rather than nowhere.
@@ -201,6 +202,11 @@ Scope {
     root.filter = ""
     root.peek = -1
     root.peekWanted = -1
+    slider.stop()
+    root.slide = 0
+    root.sliding = false
+    root.sideOwned = false
+    root.stageId = -1
   }
 
   Connections {
@@ -242,9 +248,9 @@ Scope {
 
   /** Hovering a workspace shows you what is on it, without going there. */
   function hoverWorkspace(id, entered) {
-    const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+    const here = root.stageWorkspace
     if (entered) {
-      if (id === here) return
+      if (id === here || root.moving) return
       root.peekWanted = id
       peeking.restart()
     } else if (root.peekWanted === id) {
@@ -263,6 +269,177 @@ Scope {
     id: peeking
     interval: 130
     onTriggered: root.peek = root.peekWanted
+  }
+
+  // ------------------------------------------------------ sliding sideways
+
+  // Three fingers left or right with the overview open slides the whole spread
+  // over to the next workspace, and the one after it comes in from the side —
+  // following the fingers, so stopping half way shows half of each, and
+  // letting go there goes back. The strip's ring slides with it.
+  //
+  // Nothing is rebuilt to do this. Every workspace's cards already exist and
+  // are already laid out in the same area (that is what makes peeking a
+  // cross-fade); sliding only moves each one sideways by how many workspaces
+  // it is away from the middle of the screen.
+
+  // The workspace the spread is centred on. Set when the overview opens and
+  // moved by sliding, rather than read from the compositor, because the
+  // compositor only hears about a switch after the slide has shown it.
+  property int stageId: -1
+  readonly property int stageWorkspace: root.stageId > 0 ? root.stageId
+                                      : (Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1)
+
+  // The workspaces you can slide through: the strip, less the "+" at its end.
+  readonly property var lanes: root.workspaces.filter(w => !w.fresh).map(w => w.id)
+  readonly property int stageIndex: root.lanes.indexOf(root.stageWorkspace)
+
+  // How far through the slide, in workspaces: 0.3 is a third of the way to the
+  // next one, -1 is all the way to the previous.
+  property real slide: 0
+  // Fingers down on a slide.
+  property bool sliding: false
+  // Sliding or settling: the cards must follow `slide` exactly rather than
+  // animate toward it.
+  readonly property bool moving: root.sliding || slider.running
+  // Whether the swipe in progress is one this overview took on.
+  property bool sideOwned: false
+  property real slideFrom: 0
+
+  /** Where a workspace's spread sits, in screen widths from the middle. */
+  function laneOf(workspaceId) {
+    const index = root.lanes.indexOf(workspaceId)
+    if (index < 0 || root.stageIndex < 0) return 99
+    return index - (root.stageIndex + root.slide)
+  }
+
+  // Sliding is for the one-desktop spread. Every window at once, or a search
+  // across every desktop, has nothing to slide between.
+  readonly property bool canSlide: root.active && !root.everything && root.filter === ""
+                                   && root.dragKey === "" && root.stageIndex >= 0
+
+  // Past the first or last workspace, and past one workspace per swipe, it
+  // gives a little and no more, the way a scroll view does at its ends.
+  readonly property real give: 0.12
+  function bounded(value) {
+    const low = Math.max(-1, -root.stageIndex)
+    const high = Math.min(1, root.lanes.length - 1 - root.stageIndex)
+    if (value > high) return high + root.give * (1 - Math.exp(-(value - high) / root.give))
+    if (value < low) return low - root.give * (1 - Math.exp(-(low - value) / root.give))
+    return value
+  }
+
+  Connections {
+    target: root.service
+    function onSideSwipe(phase, value, velocity, cancelled) { root.onSide(phase, value, velocity, cancelled) }
+  }
+
+  function onSide(phase, value, velocity, cancelled) {
+    switch (phase) {
+    case "begin":
+      root.sideOwned = root.canSlide
+      if (!root.sideOwned) return
+      // Caught mid-settle: finish that slide where it was heading first, so
+      // this one starts from a whole workspace.
+      if (slider.running) {
+        slider.stop()
+        root.finishSlide(slider.target)
+      }
+      peeking.stop()
+      root.peek = -1
+      root.peekWanted = -1
+      root.slideFrom = root.slide
+      root.sliding = true
+      sideWatchdog.restart()
+      break
+
+    case "move":
+      if (!root.sideOwned) return
+      root.slide = root.bounded(root.slideFrom + value)
+      sideWatchdog.restart()
+      break
+
+    case "end":
+      if (!root.sideOwned) return
+      root.sideOwned = false
+      sideWatchdog.stop()
+      root.releaseSlide(cancelled ? 0 : velocity, cancelled)
+      break
+    }
+  }
+
+  // Past half way it goes on; short of it, a flick in the same direction
+  // still does. A flick back the other way always wins.
+  readonly property real slideFlick: 2.2
+  function releaseSlide(velocity, cancelled) {
+    const at = root.slide
+    let to = 0
+    if (!cancelled) {
+      const dir = at !== 0 ? Math.sign(at) : Math.sign(velocity)
+      const flung = Math.abs(velocity) > root.slideFlick
+      if (flung && Math.sign(velocity) !== dir) to = 0
+      else if (Math.abs(at) > 0.5 || (flung && Math.abs(at) > 0.03)) to = dir
+    }
+    const next = root.stageIndex + to
+    if (next < 0 || next >= root.lanes.length) to = 0
+
+    // Tell the compositor now, not when the slide lands: it switches under the
+    // overview while the slide finishes, and is there by the time you close.
+    if (to !== 0) Hyprland.dispatch('hl.dsp.focus({ workspace = "' + root.lanes[next] + '" })')
+
+    let carry = velocity
+    if ((to - at) * carry < 0) carry = 0
+    slider.launch(at, to, Math.max(-10, Math.min(10, carry)))
+    // Only now: a slide let go exactly on a workspace lands inside launch(),
+    // and the cards must still be following `slide` when it does.
+    root.sliding = false
+  }
+
+  /** Slide one workspace over from the keyboard. */
+  function slideBy(step) {
+    if (!root.canSlide || root.sliding) return
+    if (slider.running) {
+      slider.stop()
+      root.finishSlide(slider.target)
+    }
+    root.peek = -1
+    root.slideFrom = 0
+    root.releaseSlide(step * 4, false)
+  }
+
+  // Landed: the neighbour is now the middle. Moving the stage and zeroing the
+  // slide leaves every card exactly where it already was.
+  function finishSlide(to) {
+    if (to !== 0) {
+      const next = root.lanes[root.stageIndex + to]
+      if (next !== undefined) {
+        root.stageId = next
+        // The selection moves to the desktop you are looking at, so enter
+        // goes somewhere on it.
+        const active = root.shot.find(w => w.workspace === next && w.active)
+                    || root.shot.find(w => w.workspace === next)
+        root.selectedKey = active ? active.key : ""
+      }
+    }
+    root.slide = 0
+  }
+
+  Spring {
+    id: slider
+    stiffness: 16
+    onValueChanged: if (slider.running) root.slide = slider.value
+    onSettled: root.finishSlide(slider.target)
+  }
+
+  // A lift that never arrives must not leave the spread half way between two
+  // desktops.
+  Timer {
+    id: sideWatchdog
+    interval: 1400
+    onTriggered: if (root.sliding) {
+      root.sideOwned = false
+      root.releaseSlide(0, false)
+    }
   }
 
   function matches(win) {
@@ -377,10 +554,12 @@ Scope {
       root.filter = root.filter.slice(0, -1)
       break
     case Qt.Key_Left:
-      root.moveSelection(-1, 0)
+      if (event.modifiers & Qt.ControlModifier) root.slideBy(-1)
+      else root.moveSelection(-1, 0)
       break
     case Qt.Key_Right:
-      root.moveSelection(1, 0)
+      if (event.modifiers & Qt.ControlModifier) root.slideBy(1)
+      else root.moveSelection(1, 0)
       break
     case Qt.Key_Up:
       root.moveSelection(0, -1)
