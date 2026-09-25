@@ -208,6 +208,9 @@ Scope {
         focused: id === here,
         real: real !== null,
         fresh: false,
+        // Which screen it is on, if it exists yet. One that does not will be
+        // made on whichever screen switches to it.
+        monitor: real && real.monitor ? real.monitor.name : "",
       }
     })
 
@@ -392,7 +395,27 @@ Scope {
                                       : (Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1)
 
   // The workspaces you can slide through: the strip, less the "+" at its end.
-  readonly property var lanes: root.workspaces.filter(w => !w.fresh).map(w => w.id)
+  //
+  // Only this screen's, as Hyprland's own swipe does: the ones already on it,
+  // and the ones that do not exist yet (switching to one makes it here). A
+  // workspace on the other screen is not the next desktop here — going to it
+  // moves focus to that screen, and the slide on this one snaps back.
+  readonly property var lanes: root.workspaces
+    .filter(w => !w.fresh && (w.monitor === "" || w.monitor === root.leadMonitor))
+    .map(w => w.id)
+
+  /** Where the strip's ring sits for a position along `lanes`, which can fall
+      between two tiles that are not next to each other in the strip. */
+  function laneTile(position) {
+    const count = root.lanes.length
+    if (count === 0) return 0
+    const tileOf = id => Math.max(0, root.workspaces.findIndex(w => w.id === id))
+    if (count === 1) return tileOf(root.lanes[0])
+    const i = Math.max(0, Math.min(count - 2, Math.floor(position)))
+    const from = tileOf(root.lanes[i])
+    const to = tileOf(root.lanes[i + 1])
+    return from + (to - from) * (position - i)
+  }
   readonly property int stageIndex: root.lanes.indexOf(root.stageWorkspace)
 
   // How far through the slide, in workspaces: 0.3 is a third of the way to the
