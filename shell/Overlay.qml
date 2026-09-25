@@ -44,6 +44,8 @@ Scope {
   readonly property bool opened: root.service ? root.service.showing : false
   readonly property real t: root.service ? root.service.t : 0
   readonly property bool active: root.service ? root.service.open : false
+  // `t` is changing every frame, and cards must follow it, not ease after it.
+  readonly property bool settling: root.service ? root.service.animating : false
   readonly property bool everything: root.service ? root.service.everything : false
   readonly property string leadMonitor: root.service ? root.service.monitorName : ""
 
@@ -392,6 +394,8 @@ Scope {
       root.peekWanted = -1
       root.slideFrom = root.slide
       root.slideGoal = root.slide
+      root.slideSpeed = 0
+      root.slideAt = 0
       slider.hold()
       slider.value = root.slide
       slider.velocity = 0
@@ -403,6 +407,14 @@ Scope {
       if (!root.sideOwned) return
       root.slideGoal = root.bounded(root.slideFrom + value)
       slider.value = root.slideGoal
+      {
+        const now = Date.now()
+        const dt = (now - root.slideAt) / 1000
+        root.slideSpeed = root.slideAt > 0 && dt > 0 && dt < 0.1
+          ? root.slideSpeed * 0.6 + 0.4 * (root.slideGoal - root.slideLast) / dt : 0
+        root.slideLast = root.slideGoal
+        root.slideAt = now
+      }
       sideWatchdog.restart()
       break
 
@@ -410,7 +422,9 @@ Scope {
       if (!root.sideOwned) return
       root.sideOwned = false
       sideWatchdog.stop()
-      root.releaseSlide(cancelled ? 0 : velocity, cancelled)
+      // The speed the spread had on screen as the fingers lifted, the same
+      // as swiping up: none if they had come to rest first.
+      root.releaseSlide(cancelled || Date.now() - root.slideAt > 80 ? 0 : root.slideSpeed, cancelled)
       break
     }
   }
@@ -418,8 +432,12 @@ Scope {
   // Past half way it goes on; short of it, a flick in the same direction
   // still does. A flick back the other way always wins.
   readonly property real slideFlick: 2.2
-  // Where the fingers have put the slide, which the spring chases.
+  // Where the fingers have put the slide, and how fast it was moving on
+  // screen, in workspaces per second.
   property real slideGoal: 0
+  property real slideSpeed: 0
+  property real slideLast: 0
+  property double slideAt: 0
 
   function releaseSlide(velocity, cancelled) {
     const at = root.slideGoal
@@ -441,12 +459,9 @@ Scope {
     // it had — topped up by a flick faster than it had caught up to.
     root.slideGoal = to
     if (!slider.running) slider.value = root.slide
-    slider.stiffness = 16
-    slider.damping = 0.82
-    const way = Math.sign(to - slider.value)
-    const carry = Math.max(-10, Math.min(10, velocity))
-    if (way !== 0 && Math.sign(carry) === way && Math.abs(carry) > Math.abs(slider.velocity))
-      slider.velocity = carry
+    slider.stiffness = 22
+    slider.damping = 0.86
+    slider.velocity = Math.max(-10, Math.min(10, velocity))
     // Running before the fingers are let go of, so the cards never see a
     // frame where neither is moving them.
     slider.follow(to)

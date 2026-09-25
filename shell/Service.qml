@@ -119,8 +119,33 @@ Item {
 
   // How it lands once the fingers lift: back from a stretch, or the rest of
   // the way open or closed.
-  readonly property real landStiffness: 17
-  readonly property real landDamping: 0.82
+  readonly property real landStiffness: 24
+  readonly property real landDamping: 0.86
+
+  // Fingers down or the spring still moving: `t` is changing every frame and
+  // everything drawn from it must follow it exactly, not ease toward it.
+  readonly property bool animating: tSpring.running || service.scrub !== ""
+
+  // How fast the fingers were moving `t` when last seen, in `t` per second —
+  // measured on what is on screen, stretch and all, so the spring picks up at
+  // exactly the speed the overview already had.
+  property real handSpeed: 0
+  property real lastGoal: 0
+  property double lastAt: 0
+
+  function track(goal) {
+    const now = Date.now()
+    const dt = (now - service.lastAt) / 1000
+    if (service.lastAt > 0 && dt > 0 && dt < 0.1) {
+      const v = (goal - service.lastGoal) / dt
+      // Smoothed over a few events: single samples at 125 a second are noisy.
+      service.handSpeed = service.handSpeed * 0.6 + v * 0.4
+    } else {
+      service.handSpeed = 0
+    }
+    service.lastGoal = goal
+    service.lastAt = now
+  }
 
   // Head for open or closed. The spring already has whatever speed the
   // fingers gave it, so letting go is only a change of target; `velocity` (in
@@ -132,11 +157,11 @@ Item {
     if (!tSpring.running) tSpring.value = service.t
     tSpring.stiffness = service.landStiffness
     tSpring.damping = service.landDamping
-    const way = Math.sign(target - tSpring.value)
-    if (velocity !== undefined && way !== 0 && Math.sign(velocity) === way
-        && Math.abs(velocity) > Math.abs(tSpring.velocity)) {
-      tSpring.velocity = velocity
-    }
+    // Straight on at the speed it had, whichever way that was: flung past
+    // open it carries on a little and comes back, let go mid-stretch it
+    // eases back from wherever it was heading. Starting from a standstill
+    // instead is the stall you feel as lag.
+    if (velocity !== undefined) tSpring.velocity = Math.max(-14, Math.min(14, velocity))
     tSpring.follow(target)
   }
 
@@ -145,6 +170,8 @@ Item {
     tSpring.hold()
     tSpring.velocity = 0
     service.goal = service.t
+    service.handSpeed = 0
+    service.lastAt = 0
   }
 
   Spring {
@@ -425,33 +452,28 @@ Item {
         service.goal = service.scrubFrom * (1 - Math.min(1, value))
       }
       tSpring.value = service.goal
+      service.track(service.goal)
       break
 
     case "end":
       if (service.scrub !== who) return
-      service.scrub = ""
       // Judged on where it ended up, not on the swipe alone, so a gesture that
       // carried on from a half-open overview is measured from what you saw.
-      //
-      // The speed carried into the glide is the fingers' speed turned into
-      // `t`'s, and only when it points where the overview is going: flicked
-      // open and let go it keeps moving, but a swipe that reverses and gets
-      // dropped does not fling the overview the wrong way first.
       {
         let wantOpen
         if (cancelled) wantOpen = service.goal > 0.5
         else if (opening) wantOpen = service.goal > 0.5 || service.flicked(value, speed)
         else wantOpen = !(service.goal < 0.5 || service.flicked(value, speed))
 
-        let carry = undefined
-        if (velocity !== undefined && !cancelled) {
-          const scale = opening ? (1 - service.scrubFrom) : -service.scrubFrom
-          carry = velocity * scale
-          if ((wantOpen ? 1 : -1) * carry < 0) carry = 0
-          carry = Math.max(-12, Math.min(12, carry))
-        }
+        // The speed the overview had on screen as the fingers lifted — none,
+        // if they had come to rest first.
+        const resting = Date.now() - service.lastAt > 80
+        const carry = cancelled || resting ? 0 : service.handSpeed
+        // Spring running before the fingers are let go of, so nothing ever
+        // sees a frame where neither is moving the overview.
         service.glideTo(wantOpen, speed, carry)
       }
+      service.scrub = ""
       break
 
     default:
