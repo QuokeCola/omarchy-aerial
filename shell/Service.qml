@@ -257,8 +257,13 @@ Item {
     shadowColor: "transparent",
     shadowColorInactive: "transparent",
     blur: false,
-    blurSize: 0,
-    blurPasses: 0,
+    blurSize: 8,
+    blurPasses: 1,
+    blurNoise: 0,
+    blurContrast: 1,
+    blurBrightness: 1,
+    blurVibrancy: 0,
+    blurVibrancyDarkness: 0,
   })
 
   readonly property var decoOptions: [
@@ -267,6 +272,8 @@ Item {
     "decoration:shadow:enabled", "decoration:shadow:range",
     "decoration:shadow:color", "decoration:shadow:color_inactive",
     "decoration:blur:enabled", "decoration:blur:size", "decoration:blur:passes",
+    "decoration:blur:noise", "decoration:blur:contrast", "decoration:blur:brightness",
+    "decoration:blur:vibrancy", "decoration:blur:vibrancy_darkness",
   ]
 
   Process {
@@ -311,8 +318,13 @@ Item {
       shadowColorInactive: service.colourOf(byName["decoration:shadow:color_inactive"]
                                             || byName["decoration:shadow:color"]),
       blur: !!(blurOn && (blurOn.bool === true || blurOn.int === 1)),
-      blurSize: Math.max(0, num("decoration:blur:size")),
-      blurPasses: Math.max(0, num("decoration:blur:passes")),
+      blurSize: Math.max(1, num("decoration:blur:size")),
+      blurPasses: Math.max(1, num("decoration:blur:passes")),
+      blurNoise: num("decoration:blur:noise"),
+      blurContrast: byName["decoration:blur:contrast"] ? num("decoration:blur:contrast") : 1,
+      blurBrightness: byName["decoration:blur:brightness"] ? num("decoration:blur:brightness") : 1,
+      blurVibrancy: num("decoration:blur:vibrancy"),
+      blurVibrancyDarkness: num("decoration:blur:vibrancy_darkness"),
     }
   }
 

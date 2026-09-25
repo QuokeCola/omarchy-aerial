@@ -50,19 +50,29 @@ PanelWindow {
 
   // Frosted windows. A terminal drawn partly see-through, with the compositor
   // blurring what is behind it, captures as see-through and nothing more: the
-  // blur is the compositor's, not the window's. So behind every card sits the
-  // piece of a blurred wallpaper that the card is over, and a frosted window
-  // stays frosted all the way into the spread.
+  // blur is the compositor's, not the window's. So every card is backed by
+  // Hyprland's own blur of whatever is behind it — computed here the way
+  // Hyprland computes it, with its settings, so the glass does not change as
+  // the window hands over to its card. See HyprBlur.qml.
   //
-  // Live: what is behind a card is blurred as it changes, not once — see
-  // `base` below. A machine that struggles wants the `polish` branch, which
-  // has none of this.
-  readonly property bool glass: overlay.deco.blur !== false
-  // Hyprland's blur of `size` over `passes` reaches roughly this far.
-  // How far past a card's edges its blur reads from.
-  readonly property int frostPad: surface.frostRadius
-  readonly property int frostRadius: Math.max(8, Math.min(64,
-    Math.round((overlay.deco.blurSize || 8) * Math.pow(2, Math.max(0, (overlay.deco.blurPasses || 1) - 1)) / 1.5)))
+  // Live: redrawn whenever what it covers changes, which during a swipe is
+  // every frame. A machine that struggles wants the `polish` branch.
+  readonly property bool glass: overlay.deco.blur === true
+  // Measured, not derived: behind a see-through window, Hyprland's result
+  // reads as its blur with a faint copy of the unblurred scene in it.
+  readonly property real blurScale: 1
+  readonly property real sharpness: 0
+
+  // A floating window's card is on screen, so the blur behind floating
+  // windows — which includes the tiled ones — has to run.
+  readonly property bool floatingShown: {
+    if (!surface.glass) return false
+    for (let i = 0; i < cards.count; i++) {
+      const card = cards.itemAt(i)
+      if (card && card.shown && card.floating) return true
+    }
+    return false
+  }
 
   // The part of the screen windows live in: all of it, less what the bar and
   // anything else exclusive has reserved. Hyprland reports that as
@@ -573,6 +583,39 @@ PanelWindow {
       anchors.fill: parent
     }
 
+    // Behind a tiled window: the desktop and the strip.
+    HyprBlur {
+      id: baseBlur
+      anchors.fill: parent
+      sourceItem: base
+      live: surface.glass && overlay.opened
+      pixelSize: Qt.size(Math.round(surface.width * surface.pixelRatio), Math.round(surface.height * surface.pixelRatio))
+      size: overlay.deco.blurSize * surface.blurScale
+      passes: overlay.deco.blurPasses
+      noise: overlay.deco.blurNoise
+      contrast: overlay.deco.blurContrast
+      brightness: overlay.deco.blurBrightness
+      vibrancy: overlay.deco.blurVibrancy
+      vibrancyDarkness: overlay.deco.blurVibrancyDarkness
+    }
+
+    // Behind a floating window: all of that and the tiled windows too. Only
+    // run while a floating window is on screen.
+    HyprBlur {
+      id: floatBlur
+      anchors.fill: parent
+      sourceItem: lower
+      live: surface.glass && overlay.opened && surface.floatingShown
+      pixelSize: baseBlur.pixelSize
+      size: baseBlur.size
+      passes: baseBlur.passes
+      noise: baseBlur.noise
+      contrast: baseBlur.contrast
+      brightness: baseBlur.brightness
+      vibrancy: baseBlur.vibrancy
+      vibrancyDarkness: baseBlur.vibrancyDarkness
+    }
+
     // ------------------------------------------------------------ the windows
     Repeater {
       id: cards
@@ -683,63 +726,35 @@ PanelWindow {
           visible: overlay.deco.border > 0 && opacity > 0.01 && !card.dragging
         }
 
-        // What the compositor would have blurred behind this window, from
-        // wherever the card now is: a live copy of just what is behind the
-        // card — the desktop and strip, and for a floating window the tiled
-        // cards too — a little larger than it, so the blur has something to
-        // draw in from at the edges, blurred here and cut to the card's shape.
+        // What the compositor blurs behind this window: the piece of the
+        // blurred screen the card is over, cut to its shape. Tiled windows
+        // take it from the desktop's blur; floating ones from the blur that
+        // has the tiled windows in it too, the way Hyprland stacks them.
         //
         // Outside the frame, not in it: the frame draws its contents through
-        // a copy of its own, and a live copy nested in that never updates.
-        // It also has to be on screen to update at all, so it is, invisibly.
+        // a copy of its own, and textures read inside that never update.
         readonly property bool frostedGlass: surface.glass && overlay.wallpaper !== "" && shot.hasContent
 
-        ShaderEffectSource {
-          id: behind
-          x: -surface.frostPad
-          y: -surface.frostPad
-          width: card.width + 2 * surface.frostPad
-          height: card.height + 2 * surface.frostPad
-          opacity: 0
+        ShaderEffect {
+          anchors.fill: parent
           visible: card.frostedGlass
-          sourceItem: card.floating ? lower : base
-          sourceRect: Qt.rect(card.x - surface.frostPad, card.y - surface.frostPad,
-                              Math.max(1, card.width) + 2 * surface.frostPad,
-                              Math.max(1, card.height) + 2 * surface.frostPad)
-          live: true
-          recursive: false
-        }
-
-        Item {
-          id: frostShape
-          width: behind.width
-          height: behind.height
-          visible: false
-          layer.enabled: true
-
-          Rectangle {
-            x: surface.frostPad
-            y: surface.frostPad
-            width: card.width
-            height: card.height
-            radius: card.radius
-          }
-        }
-
-        MultiEffect {
-          x: behind.x
-          y: behind.y
-          width: behind.width
-          height: behind.height
-          visible: card.frostedGlass
-          source: behind
-          blurEnabled: true
-          blur: 1
-          blurMax: surface.frostRadius
-          autoPaddingEnabled: false
-          maskEnabled: true
-          maskSource: frostShape
           opacity: frame.opacity
+          property var source: card.floating ? floatBlur.output : baseBlur.output
+          // Where the card is on screen, scaled about its middle as it is
+          // drawn, as a fraction of the screen.
+          property vector4d area: {
+            const w = card.width * card.scale
+            const h = card.height * card.scale
+            const x = card.x + (card.width - w) / 2
+            const y = card.y + (card.height - h) / 2
+            return Qt.vector4d(x / Math.max(1, surface.width), y / Math.max(1, surface.height),
+                               w / Math.max(1, surface.width), h / Math.max(1, surface.height))
+          }
+          property vector2d size: Qt.vector2d(width, height)
+          property real radius: card.radius
+          property var sharp: card.floating ? floatBlur.input : baseBlur.input
+          property real sharpness: surface.sharpness
+          fragmentShader: Qt.resolvedUrl("blur/frost.frag.qsb")
         }
 
         ClippingRectangle {
