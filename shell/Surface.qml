@@ -57,7 +57,7 @@ PanelWindow {
   //
   // Live: redrawn whenever what it covers changes, which during a swipe is
   // every frame. A machine that struggles wants the `polish` branch.
-  readonly property bool glass: overlay.deco.blur === true
+  readonly property bool glass: overlay.deco.blur === true && overlay.frost
   // Measured, not derived: against screenshots of Hyprland blurring a
   // floating terminal over a static scene, the port matched best — to within
   // one level of brightness — with the blur a quarter larger than configured.

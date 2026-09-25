@@ -81,6 +81,7 @@ Scope {
 
   readonly property string wallpaper: root.service ? root.service.wallpaper : ""
   readonly property var deco: root.service ? root.service.deco : ({ rounding: 0, border: 0, shadow: false })
+  readonly property bool frost: root.service ? root.service.frost : true
 
   // How far the cards have left the windows they stand in for, for crossfading
   // Hyprland's look (rounding, border, shadow) into the overview's. Done by
@@ -496,6 +497,15 @@ Scope {
   Connections {
     target: root.service
     function onSideSwipe(phase, value, velocity, cancelled) { root.onSide(phase, value, velocity, cancelled) }
+    function onStepRequested(step) {
+      if (!root.canSlide) {
+        root.endDeskSlide()
+        return
+      }
+      root.slideBy(step)
+      // Nowhere to go that way: nothing moved, so nothing will land.
+      if (!root.moving) root.endDeskSlide()
+    }
   }
 
   function onSide(phase, value, velocity, cancelled) {

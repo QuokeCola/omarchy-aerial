@@ -72,6 +72,27 @@ Item {
   // per second.
   signal sideSwipe(string phase, real value, real velocity, bool cancelled)
 
+  // A shortcut asked for the next (+1) or previous (-1) desktop. The overlay
+  // slides there the way a swipe would, overview open or not.
+  signal stepRequested(int step)
+
+  /** Slide one desktop over, from a key. Bound in Hyprland as
+      hl.dsp.event("aerial,go:next") or "aerial,go:prev", which reaches here
+      without starting a process for every keypress. */
+  function go(where) {
+    const step = where === "next" ? 1 : (where === "prev" ? -1 : 0)
+    if (step === 0) return
+    if (!service.open) {
+      // Mid-swipe, or half open or closed: not now.
+      if (service.showing || service.scrub !== "") return
+      service.deskSlide = true
+      service.aim()
+      service.arming()
+      service.refreshModels()
+    }
+    service.stepRequested(step)
+  }
+
   // ---------------------------------------------------------------- opening
 
   function aim() {
@@ -360,8 +381,39 @@ Item {
   // too. So the swipe on the desktop is this plugin's, finished with the same
   // spring as the overview's, and the keyboard is left alone.
   //
-  // Set to false to leave three fingers sideways alone on the desktop.
-  readonly property bool deskSwipe: true
+  // Set from the settings panel; false leaves three fingers sideways alone
+  // on the desktop.
+  property bool deskSwipe: true
+
+  // Frost see-through windows' cards with Hyprland's own blur, live. Set from
+  // the settings panel; it costs GPU time while the overview is up.
+  property bool frost: true
+
+  // ---------------------------------------------------------- recording keys
+
+  // The settings panel is listening for a shortcut: Hyprland's bindings are
+  // parked in an empty submap meanwhile (see app/gesture.lua), so a combination
+  // that is already taken reaches the panel instead of running.
+  property bool recording: false
+
+  Process { id: submapLua }
+
+  function setRecording(on) {
+    service.recording = on
+    submapLua.command = ["/usr/bin/hyprctl", "eval",
+                         'hl.dispatch(hl.dsp.submap("' + (on ? "aerial-record" : "reset") + '"))']
+    submapLua.running = true
+    if (on) recordingLimit.restart()
+    else recordingLimit.stop()
+  }
+
+  // Never left in the submap: however the panel stops listening — or fails
+  // to — the keyboard comes back.
+  Timer {
+    id: recordingLimit
+    interval: 10000
+    onTriggered: service.setRecording(false)
+  }
 
   readonly property string sideways: service.open || service.deskSwipe ? "slide"
                                    : (!service.showing ? "none" : "")
@@ -415,6 +467,11 @@ Item {
       // Only ever sent when the Lua half could not find the movement in what
       // Hyprland gave it, which means this plugin needs updating.
       console.warn("aerial: cannot read the swipe — Hyprland's gesture payload is now " + rest)
+      return
+    }
+
+    if (what === "go") {
+      service.go(rest)
       return
     }
 
@@ -549,6 +606,14 @@ Item {
 
     function onRawEvent(event) {
       const name = event.name || ""
+
+      // Left the recording submap some other way (Escape does, in the
+      // compositor): stop listening.
+      if (name === "submap" && service.recording && event.data !== "aerial-record") {
+        service.recording = false
+        recordingLimit.stop()
+        return
+      }
 
       if (name === "configreloaded") {
         // A reload drops runtime gestures the same way it drops runtime binds.
