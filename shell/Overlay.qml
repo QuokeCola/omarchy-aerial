@@ -62,7 +62,7 @@ Scope {
     target: root
     property: "reveal"
     to: 1
-    duration: 110
+    duration: 70
     easing.type: Easing.OutCubic
   }
 

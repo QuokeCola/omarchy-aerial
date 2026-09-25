@@ -27,10 +27,12 @@
 -- hand instead of arriving before it has finished moving.
 local DISTANCE = 250
 
--- How far the fingers travel to slide one whole workspace across, with the
--- overview open. The same as Hyprland's own workspace_swipe_distance, so it
--- feels like the swipe you already know.
-local SIDE_DISTANCE = 300
+-- How far the fingers travel to slide one whole workspace across. About half
+-- a touchpad: the width of an easy three-finger swipe. (Hyprland's own
+-- default is 300, which moves a whole screen for three centimetres of finger
+-- and reads as the desktop running away from the hand.) A quick flick still
+-- goes a whole workspace from much less.
+local SIDE_DISTANCE = 550
 
 -- How far back to look when measuring speed.
 local WINDOW_MS = 90

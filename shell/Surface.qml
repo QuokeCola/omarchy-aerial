@@ -893,7 +893,12 @@ PanelWindow {
             // to the window itself (or has just taken over from it): there,
             // a card a twelfth of a second stale is a visible tick as the
             // real window replaces it. Live for those few frames only.
-            live: card.shown && overlay.opened && overlay.t < 0.15
+            // Only on the way in or out of a swipe up or down, not while
+            // sliding between desktops at no zoom: live, every window on
+            // screen is captured every frame, which is exactly the load the
+            // clock exists to avoid, and the slide stutters under it.
+            live: card.shown && overlay.opened && !overlay.deskSliding
+                  && overlay.t > 0.0005 && overlay.t < 0.15
           }
 
           Connections {
