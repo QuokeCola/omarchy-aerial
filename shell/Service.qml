@@ -126,8 +126,8 @@ Item {
 
   // How it lands once the fingers lift: back from a stretch, or the rest of
   // the way open or closed.
-  readonly property real landStiffness: 24
-  readonly property real landDamping: 0.86
+  readonly property real landStiffness: 20
+  readonly property real landDamping: 0.9
 
   // Fingers down or the spring still moving: `t` is changing every frame and
   // everything drawn from it must follow it exactly, not ease toward it.
@@ -168,7 +168,7 @@ Item {
     // open it carries on a little and comes back, let go mid-stretch it
     // eases back from wherever it was heading. Starting from a standstill
     // instead is the stall you feel as lag.
-    if (velocity !== undefined) tSpring.velocity = Math.max(-14, Math.min(14, velocity))
+    if (velocity !== undefined) tSpring.velocity = Math.max(-8, Math.min(8, velocity))
     tSpring.follow(target)
   }
 
