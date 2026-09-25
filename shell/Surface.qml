@@ -43,10 +43,10 @@ PanelWindow {
   readonly property bool leading: surface.monitorName === overlay.leadMonitor
 
   // How soft the wallpaper behind the spread is, 0 to 1. At 0 it is the
-  // wallpaper itself, sharp, only dimmed.
-  readonly property real blur: 0.55
-  // How much it is dimmed, so windows and captions read against any wallpaper.
-  readonly property real dim: 0.5
+  // wallpaper itself, sharp, exactly as the desktop shows it.
+  readonly property real blur: 0
+  // How much it is darkened behind the spread, 0 to 1. At 0 it is not.
+  readonly property real dim: 0
 
   // The part of the screen windows live in: all of it, less what the bar and
   // anything else exclusive has reserved. Hyprland reports that as

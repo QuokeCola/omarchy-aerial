@@ -27,7 +27,19 @@ Item {
   // plugin loading with "Cannot override FINAL property".
   readonly property bool showing: t > 0.001
   // True once the user has committed: clicks land, keys are grabbed.
-  readonly property bool open: t > 0.999
+  // With a hysteresis: the spring lands with a bounce, and an overview that
+  // dipped to 0.98 on the rebound must not drop the keyboard and grab it
+  // again — or swap what three fingers sideways mean — on the way.
+  property bool open: false
+  onTChanged: {
+    if (service.t > 0.995) service.open = true
+    else if (service.t < 0.9) service.open = false
+  }
+
+  // Where the fingers have put the overview, which `t` chases. Decisions —
+  // open or not, when they lift — are made on this, not on the spring lagging
+  // behind it.
+  property real goal: 0
 
   // Which monitor the overview belongs to — the one the pointer was on.
   property string monitorName: ""
@@ -99,44 +111,49 @@ Item {
     return 1 + service.stretch * (1 - Math.exp(-(value - 1) / service.stretch))
   }
 
-  function toggle() { service.t > 0.5 ? service.hide() : service.show() }
+  function toggle() { service.goal > 0.5 ? service.hide() : service.show() }
 
-  // Animate the rest of the way. Let go of a swipe and it carries on at the
-  // speed your fingers left it with (`velocity`, in `t` per second), so there
-  // is no seam between following the hand and finishing on its own. Opened by
-  // a key or a click there is no hand to carry on from, and it eases instead.
+  // How the spring feels. Following the fingers it is tight, so it trails
+  // them by a hair and settles with a small give when they stop; let go, it
+  // loosens, and lands with a visible bounce.
+  readonly property real followStiffness: 32
+  readonly property real followDamping: 0.78
+  readonly property real landStiffness: 17
+  readonly property real landDamping: 0.66
+
+  // Head for open or closed. The spring already has whatever speed the
+  // fingers gave it, so letting go is only a change of target; `velocity` (in
+  // `t` per second) tops that up when the fingers were faster than the spring
+  // had caught up to — a flick — and only in the direction it is going.
   function glideTo(wantOpen, speed, velocity) {
     const target = wantOpen ? 1 : 0
-    opener.stop()
-    tSpring.stop()
-    if (velocity !== undefined) {
-      tSpring.launch(service.t, target, velocity)
-      return
+    service.goal = target
+    if (!tSpring.running) tSpring.value = service.t
+    tSpring.stiffness = service.landStiffness
+    tSpring.damping = service.landDamping
+    const way = Math.sign(target - tSpring.value)
+    if (velocity !== undefined && way !== 0 && Math.sign(velocity) === way
+        && Math.abs(velocity) > Math.abs(tSpring.velocity)) {
+      tSpring.velocity = velocity
     }
-    const remaining = Math.abs(target - service.t)
-    const haste = 1 + Math.min(3, Math.max(0, speed || 0))
-    opener.to = target
-    opener.duration = Math.max(90, Math.round(260 * remaining / haste))
-    opener.restart()
+    tSpring.follow(target)
   }
 
-  function stopGliding() {
-    opener.stop()
-    tSpring.stop()
+  // Fingers down: from here the spring chases them.
+  function grab() {
+    if (!tSpring.running) {
+      tSpring.value = service.t
+      tSpring.velocity = 0
+    }
+    tSpring.stiffness = service.followStiffness
+    tSpring.damping = service.followDamping
+    service.goal = service.t
   }
 
   Spring {
     id: tSpring
-    onValueChanged: if (tSpring.running) service.t = tSpring.value
-    onSettled: service.t = tSpring.target
-  }
-
-  NumberAnimation {
-    id: opener
-    target: service
-    property: "t"
-    duration: 240
-    easing.type: Easing.OutCubic
+    floor: 0
+    onValueChanged: service.t = tSpring.value
   }
 
   // ---------------------------------------------------------------- the swipe
@@ -366,7 +383,7 @@ Item {
     switch (phase) {
     case "begin":
       if (opening) {
-        if (service.t > 0.999) return
+        if (service.open) return
         service.everything = wantsEverything
         service.aim()
         service.arming()
@@ -382,16 +399,17 @@ Item {
         if (service.t < 0.05) return
       }
       settle.stop()
-      service.stopGliding()
+      service.grab()
       service.scrubFrom = service.t
       service.scrub = who
       break
 
     case "move":
       if (service.scrub !== who) return
-      service.t = opening
+      service.goal = opening
         ? service.rubber(service.scrubFrom + (1 - service.scrubFrom) * value)
         : service.scrubFrom * (1 - Math.min(1, value))
+      tSpring.follow(service.goal)
       break
 
     case "end":
@@ -406,9 +424,9 @@ Item {
       // dropped does not fling the overview the wrong way first.
       {
         let wantOpen
-        if (cancelled) wantOpen = service.t > 0.5
-        else if (opening) wantOpen = service.t > 0.5 || service.flicked(value, speed)
-        else wantOpen = !(service.t < 0.5 || service.flicked(value, speed))
+        if (cancelled) wantOpen = service.goal > 0.5
+        else if (opening) wantOpen = service.goal > 0.5 || service.flicked(value, speed)
+        else wantOpen = !(service.goal < 0.5 || service.flicked(value, speed))
 
         let carry = undefined
         if (velocity !== undefined && !cancelled) {
@@ -437,7 +455,7 @@ Item {
     interval: 1400
     onTriggered: {
       if (service.scrub === "") return
-      const wasMostlyOpen = service.t > 0.5
+      const wasMostlyOpen = service.goal > 0.5
       service.scrub = ""
       service.glideTo(wasMostlyOpen, 0)
     }

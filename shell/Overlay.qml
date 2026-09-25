@@ -239,7 +239,10 @@ Scope {
     root.peek = -1
     root.peekWanted = -1
     slider.stop()
+    slider.value = 0
+    slider.velocity = 0
     root.slide = 0
+    root.slideGoal = 0
     root.sliding = false
     root.sideOwned = false
     root.stageId = -1
@@ -385,13 +388,19 @@ Scope {
       root.peek = -1
       root.peekWanted = -1
       root.slideFrom = root.slide
+      root.slideGoal = root.slide
+      slider.value = root.slide
+      slider.velocity = 0
+      slider.stiffness = 32
+      slider.damping = 0.78
       root.sliding = true
       sideWatchdog.restart()
       break
 
     case "move":
       if (!root.sideOwned) return
-      root.slide = root.bounded(root.slideFrom + value)
+      root.slideGoal = root.bounded(root.slideFrom + value)
+      slider.follow(root.slideGoal)
       sideWatchdog.restart()
       break
 
@@ -407,8 +416,11 @@ Scope {
   // Past half way it goes on; short of it, a flick in the same direction
   // still does. A flick back the other way always wins.
   readonly property real slideFlick: 2.2
+  // Where the fingers have put the slide, which the spring chases.
+  property real slideGoal: 0
+
   function releaseSlide(velocity, cancelled) {
-    const at = root.slide
+    const at = root.slideGoal
     let to = 0
     if (!cancelled) {
       const dir = at !== 0 ? Math.sign(at) : Math.sign(velocity)
@@ -423,11 +435,19 @@ Scope {
     // overview while the slide finishes, and is there by the time you close.
     if (to !== 0) Hyprland.dispatch('hl.dsp.focus({ workspace = "' + root.lanes[next] + '" })')
 
-    let carry = velocity
-    if ((to - at) * carry < 0) carry = 0
-    slider.launch(at, to, Math.max(-10, Math.min(10, carry)))
-    // Only now: a slide let go exactly on a workspace lands inside launch(),
-    // and the cards must still be following `slide` when it does.
+    // Let go, the spring loosens and lands with a bounce, keeping the speed
+    // it had — topped up by a flick faster than it had caught up to.
+    root.slideGoal = to
+    if (!slider.running) slider.value = root.slide
+    slider.stiffness = 16
+    slider.damping = 0.68
+    const way = Math.sign(to - slider.value)
+    const carry = Math.max(-10, Math.min(10, velocity))
+    if (way !== 0 && Math.sign(carry) === way && Math.abs(carry) > Math.abs(slider.velocity))
+      slider.velocity = carry
+    // Running before the fingers are let go of, so the cards never see a
+    // frame where neither is moving them.
+    slider.follow(to)
     root.sliding = false
   }
 
@@ -440,6 +460,9 @@ Scope {
     }
     root.peek = -1
     root.slideFrom = 0
+    // As if the fingers had carried it just past half way: the spring still
+    // starts from where the spread is, and does the whole trip itself.
+    root.slideGoal = step * 0.51
     root.releaseSlide(step * 4, false)
   }
 
@@ -462,9 +485,10 @@ Scope {
 
   Spring {
     id: slider
-    stiffness: 16
-    onValueChanged: if (slider.running) root.slide = slider.value
-    onSettled: root.finishSlide(slider.target)
+    onValueChanged: root.slide = slider.value
+    // Fingers resting mid-slide let the spring settle too; that is not a
+    // landing.
+    onSettled: if (!root.sliding) root.finishSlide(slider.target)
   }
 
   // A lift that never arrives must not leave the spread half way between two

@@ -1,68 +1,87 @@
 import QtQuick
 
-// The rest of a swipe, after the fingers lift.
+// What moves the overview: a spring, all the way through.
 //
-// A fixed-length eased animation starts from a standstill, so however fast the
-// hand was moving, the overview visibly stops and then sets off again — the
-// hitch you feel at the end of a gesture that otherwise tracked perfectly. A
-// spring starts at the speed the fingers left it with and decelerates into
-// place, so the hand-off is invisible.
-//
-// Critically damped, and stopped on the frame it reaches its target rather
-// than allowed to wobble through it: an overview that bounces past "open"
-// would drop the keyboard and pick it up again.
+// While the fingers are down the spring chases them rather than being nailed
+// to them — a few milliseconds behind, settling with a small overshoot when
+// they stop — which is what makes a swipe feel like it has weight instead of
+// like a scrollbar. When they lift, the same spring simply gets a new target
+// and carries on at the speed it already had, so there is no seam between
+// following the hand and finishing on its own, and it lands with a little
+// bounce.
 FrameAnimation {
   id: spring
 
   property real value: 0
   property real velocity: 0          // per second
   property real target: 0
-  // How stiff. Settles in about 4.7 / stiffness seconds from a standstill.
-  property real stiffness: 17
+
+  // How quickly it pulls toward the target, in radians per second, and how
+  // much it resists overshooting: 1 never overshoots, lower bounces more.
+  property real stiffness: 18
+  property real damping: 0.72
+
+  // Never below this: an overview that bounced past closed would draw every
+  // card bigger than its window.
+  property real floor: -Infinity
 
   signal settled()
 
+  /** Chase `to`, keeping whatever position and speed there already is. */
+  function follow(to) {
+    spring.target = to
+    if (!spring.running) spring.start()
+  }
+
+  /** Start from `from` at `speed`, heading for `to`. */
   function launch(from, to, speed) {
     spring.value = from
-    spring.target = to
     spring.velocity = speed || 0
-    if (Math.abs(from - to) < 0.0005 && Math.abs(spring.velocity) < 0.01) {
-      spring.value = to
-      spring.stop()
-      spring.settled()
+    spring.target = to
+    if (spring.isSettled()) {
+      spring.finish()
       return
     }
-    spring.restart()
+    if (!spring.running) spring.start()
+  }
+
+  /** Stop where it is, keeping its speed for whoever picks it up next. */
+  function hold() { spring.stop() }
+
+  function isSettled() {
+    return Math.abs(spring.value - spring.target) < 0.0008 && Math.abs(spring.velocity) < 0.02
+  }
+
+  // Settled is said while still running, so anything that hands the position
+  // over to something else does it before anyone sees the animation as done.
+  function finish() {
+    spring.value = spring.target
+    spring.velocity = 0
+    spring.settled()
+    spring.stop()
   }
 
   onTriggered: {
     // Small fixed steps, so a dropped frame does not become a jump.
     let left = Math.min(spring.frameTime, 1 / 30)
     const w = spring.stiffness
+    const z = spring.damping
+    const to = spring.target
     let x = spring.value
     let v = spring.velocity
-    const to = spring.target
-    const before = x - to
     while (left > 0) {
       const dt = Math.min(left, 1 / 240)
-      const a = -w * w * (x - to) - 2 * w * v
+      const a = -w * w * (x - to) - 2 * z * w * v
       v += a * dt
       x += v * dt
       left -= dt
     }
-    const after = x - to
-    if ((before !== 0 && Math.sign(after) !== Math.sign(before))
-        || (Math.abs(after) < 0.0005 && Math.abs(v) < 0.02)) {
-      // Settled is said while still running, so anything that hands the
-      // position over to something else does it before anyone sees the
-      // animation as finished.
-      spring.value = to
-      spring.velocity = 0
-      spring.settled()
-      spring.stop()
-      return
+    if (x < spring.floor) {
+      x = spring.floor
+      v = 0
     }
     spring.velocity = v
     spring.value = x
+    if (spring.isSettled()) spring.finish()
   }
 }
