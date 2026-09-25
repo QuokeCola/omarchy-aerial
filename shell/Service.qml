@@ -264,6 +264,8 @@ Item {
     blurBrightness: 1,
     blurVibrancy: 0,
     blurVibrancyDarkness: 0,
+    shadowPower: 1,
+    roundingPower: 2,
   })
 
   readonly property var decoOptions: [
@@ -274,6 +276,7 @@ Item {
     "decoration:blur:enabled", "decoration:blur:size", "decoration:blur:passes",
     "decoration:blur:noise", "decoration:blur:contrast", "decoration:blur:brightness",
     "decoration:blur:vibrancy", "decoration:blur:vibrancy_darkness",
+    "decoration:shadow:render_power", "decoration:rounding_power",
   ]
 
   Process {
@@ -325,6 +328,8 @@ Item {
       blurBrightness: byName["decoration:blur:brightness"] ? num("decoration:blur:brightness") : 1,
       blurVibrancy: num("decoration:blur:vibrancy"),
       blurVibrancyDarkness: num("decoration:blur:vibrancy_darkness"),
+      shadowPower: Math.max(1, Math.min(4, num("decoration:shadow:render_power") || 1)),
+      roundingPower: byName["decoration:rounding_power"] ? num("decoration:rounding_power") : 2,
     }
   }
 

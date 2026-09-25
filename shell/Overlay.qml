@@ -42,7 +42,32 @@ Scope {
   function toggle() { if (root.service) root.service.toggle() }
 
   readonly property bool opened: root.service ? root.service.showing : false
-  readonly property real t: root.service ? root.service.t : 0
+  // Where the overview is drawn: `t`, held at nothing until the overview is
+  // ready to appear, then let catch up. The fingers have moved on by the
+  // time every capture is in, and appearing where they now are would be a
+  // jump; appearing exactly on the desktop and catching up is not.
+  property real reveal: 0
+  readonly property real t: root.settleIn((root.service ? root.service.t : 0) * root.reveal)
+
+  // Within the last few percent of closed, eased the rest of the way down to
+  // exactly nothing. The overview is put away once `t` is all but zero, and a
+  // card even a thousandth of the way to its slot is a pixel or two off its
+  // window — which, on the frame the window takes back over, is a twitch.
+  // Continuous with `t` above the knee, so nothing jumps.
+  readonly property real knee: 0.03
+  function settleIn(v) { return v < root.knee ? v * v / root.knee : v }
+
+  NumberAnimation {
+    id: revealing
+    target: root
+    property: "reveal"
+    to: 1
+    duration: 110
+    easing.type: Easing.OutCubic
+  }
+
+  /** The overview is on screen, matching the desktop exactly: start moving. */
+  function revealed() { if (root.reveal < 1 && !revealing.running) revealing.restart() }
   readonly property bool active: root.service ? root.service.open : false
   // `t` is changing every frame, and cards must follow it, not ease after it.
   readonly property bool settling: root.service ? root.service.animating : false
@@ -78,6 +103,16 @@ Scope {
 
   // ------------------------------------------------------------- what is there
 
+  /** Whether a window has focus: first in Hyprland's focus history. Its own
+      `activated` can lag a focus change, and a card that thinks the wrong
+      window is focused draws the wrong border and glow on the one frame that
+      has to match exactly. */
+  function isActive(top) {
+    const ipc = top.lastIpcObject || {}
+    if (ipc.focusHistoryID !== undefined) return ipc.focusHistoryID === 0
+    return top.activated === true
+  }
+
   /** The rectangle a window occupies, in its own monitor's logical pixels. */
   function rectOf(top) {
     const ipc = top.lastIpcObject || {}
@@ -111,7 +146,7 @@ Scope {
         appId: rect.appId,
         workspace: top.workspace.id,
         monitor: mon.name,
-        active: top.activated === true,
+        active: root.isActive(top),
         floating: (top.lastIpcObject || {}).floating === true,
         // Hyprland reports global coordinates; a surface covers one monitor.
         x: rect.x - mon.x,
@@ -139,7 +174,7 @@ Scope {
       // Omarchy's default window opacity: 0.985 focused, 0.96 not, for every
       // window still wearing its tag.
       const tagged = tags.some(t => String(t).replace(/\*$/, "") === "default-opacity")
-      const active = top.activated === true
+      const active = root.isActive(top)
       out[top.address] = {
         x: rect.x - mon.x,
         y: rect.y - mon.y,
@@ -206,7 +241,7 @@ Scope {
         w: rect.w / width,
         h: rect.h / height,
         appId: rect.appId,
-        active: top.activated === true,
+        active: root.isActive(top),
       })
     }
     return out
@@ -257,7 +292,11 @@ Scope {
     function onArming() { root.sync() }
   }
 
-  onOpenedChanged: if (!root.opened) root.forget()
+  onOpenedChanged: if (!root.opened) {
+    revealing.stop()
+    root.reveal = 0
+    root.forget()
+  }
 
   // A window that has just been sent elsewhere or closed should leave the
   // spread, but only once the compositor has confirmed it.

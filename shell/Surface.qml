@@ -59,10 +59,12 @@ PanelWindow {
   // every frame. A machine that struggles wants the `polish` branch.
   readonly property bool glass: overlay.deco.blur === true
   // Measured, not derived: against screenshots of Hyprland blurring a
-  // floating terminal over a static scene, the port matches best — to within
-  // one level of brightness — at twice the configured size. Everything else
-  // it takes as configured.
-  readonly property real blurScale: 2
+  // floating terminal over a static scene, the port matched best — to within
+  // one level of brightness — with the blur a quarter larger than configured.
+  // (It measured as twice, back when the blur ran at the shell's own pixel
+  // ratio of 2 rather than the monitor's 1.25; this is the same blur on
+  // screen.) Everything else it takes as configured.
+  readonly property real blurScale: 1.25
 
   // A floating window's card is on screen, so the blur behind floating
   // windows — which includes the tiled ones — has to run.
@@ -110,6 +112,9 @@ PanelWindow {
     onTriggered: surface.ready = true
   }
 
+  // The screen swiped on decides when the overview starts to move.
+  onReadyChanged: if (surface.ready && (surface.leading || overlay.leadMonitor === "")) overlay.revealed()
+
   Connections {
     target: overlay
     function onOpenedChanged() { if (!overlay.opened) surface.ready = false }
@@ -126,6 +131,19 @@ PanelWindow {
     }
     return true
   }
+
+  // The scale Hyprland draws this monitor at. Not Qt's pixel ratio: the shell
+  // renders its surfaces at a whole-number ratio (2 here, for a 1.25 screen)
+  // and lets the compositor scale them down, so every size that has to match
+  // what Hyprland draws — borders, shadows, the pixel grid — is worked out in
+  // Hyprland's pixels, not Qt's.
+  readonly property real hyprScale: surface.monitor && surface.monitor.scale > 0 ? surface.monitor.scale : surface.pixelRatio
+
+  // To the screen's real pixel grid, the way Hyprland places windows. At a
+  // fractional scale a window at logical 47 sits on pixel 58.75, which the
+  // compositor rounds and a card would not: resampled half a pixel off, every
+  // edge and every letter of text shifts as the card takes over.
+  function snap(v) { return Math.round(v * surface.hyprScale) / surface.hyprScale }
 
   readonly property real pixelRatio: surface.screenInfo && surface.screenInfo.devicePixelRatio > 0
                                      ? surface.screenInfo.devicePixelRatio : 1
@@ -635,7 +653,7 @@ PanelWindow {
       anchors.fill: parent
       sourceItem: base
       live: surface.glass && overlay.opened
-      pixelSize: Qt.size(Math.round(surface.width * surface.pixelRatio), Math.round(surface.height * surface.pixelRatio))
+      pixelSize: Qt.size(Math.round(surface.width * surface.hyprScale), Math.round(surface.height * surface.hyprScale))
       size: overlay.deco.blurSize * surface.blurScale
       passes: overlay.deco.blurPasses
       noise: overlay.deco.blurNoise
@@ -713,19 +731,32 @@ PanelWindow {
         readonly property real along: Math.min(1, overlay.t)
         readonly property real beyond: Math.max(0, overlay.t - 1)
         readonly property real squeeze: 1 - card.beyond * 0.7
-        readonly property real baseW: card.slot ? card.real.w + (card.slot.w - card.real.w) * card.along : card.real.w
-        readonly property real baseH: card.slot ? card.real.h + (card.slot.h - card.real.h) * card.along : card.real.h
+        // The window's own size, in the pixels its buffer actually has when
+        // that is within a pixel or two of what Hyprland reports: drawn at
+        // exactly that size, a card is a one-to-one copy of the window rather
+        // than one resampled a pixel larger or smaller, which reads as the
+        // text going soft for a frame as the card takes over.
+        readonly property real ownW: {
+          const px = shot.sourceSize.width
+          return px > 0 && Math.abs(px - card.real.w * surface.hyprScale) <= 2 ? px / surface.hyprScale : card.real.w
+        }
+        readonly property real ownH: {
+          const px = shot.sourceSize.height
+          return px > 0 && Math.abs(px - card.real.h * surface.hyprScale) <= 2 ? px / surface.hyprScale : card.real.h
+        }
+        readonly property real baseW: card.slot ? card.ownW + (card.slot.w - card.ownW) * card.along : card.ownW
+        readonly property real baseH: card.slot ? card.ownH + (card.slot.h - card.ownH) * card.along : card.ownH
 
-        x: (card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
+        x: surface.snap((card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
            + card.baseW * (1 - card.squeeze) / 2
            + card.shift
-           + (card.dragging ? dragger.activeTranslation.x : 0)
-        y: (card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
+           + (card.dragging ? dragger.activeTranslation.x : 0))
+        y: surface.snap((card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
            + card.baseH * (1 - card.squeeze) / 2
            - card.beyond * surface.height * 0.12
-           + (card.dragging ? dragger.activeTranslation.y : 0)
-        width: card.baseW * card.squeeze
-        height: card.baseH * card.squeeze
+           + (card.dragging ? dragger.activeTranslation.y : 0))
+        width: surface.snap(card.baseW * card.squeeze)
+        height: surface.snap(card.baseH * card.squeeze)
 
         Behavior on x { enabled: overlay.active && !card.dragging && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on y { enabled: overlay.active && !card.dragging && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
@@ -752,29 +783,56 @@ PanelWindow {
         readonly property real radius: overlay.deco.rounding + (14 - overlay.deco.rounding) * overlay.dress
 
         // Hyprland's shadow and border, which the card wears while it still
-        // stands in for the window, and sheds as it becomes a card.
-        RectangularShadow {
+        // stands in for the window, and sheds as it becomes a card. Drawn by
+        // ports of Hyprland's own shaders, at the sizes Hyprland works them
+        // out in — physical pixels, rounded where it rounds — so that as the
+        // card takes over from the window not a pixel of its outline moves.
+        readonly property int pxW: Math.round(card.width * surface.hyprScale)
+        readonly property int pxH: Math.round(card.height * surface.hyprScale)
+        readonly property real pxRound: card.radius * surface.hyprScale
+        readonly property real dressedAway: 1 - overlay.dress
+
+        ShaderEffect {
+          id: shadowEffect
+          readonly property int reach: Math.round((overlay.deco.border + overlay.deco.shadowRange) * surface.hyprScale)
+          readonly property int corner: Math.floor((card.radius + overlay.deco.border) * surface.hyprScale)
+          readonly property int spread: Math.floor(overlay.deco.shadowRange * surface.hyprScale)
+          readonly property color tint: card.focusedWindow ? overlay.deco.shadowColor : overlay.deco.shadowColorInactive
+          x: -reach / surface.hyprScale
+          y: -reach / surface.hyprScale
+          width: (card.pxW + 2 * reach) / surface.hyprScale
+          height: (card.pxH + 2 * reach) / surface.hyprScale
           z: -1
-          anchors.fill: parent
-          anchors.margins: -overlay.deco.border
-          radius: card.radius + overlay.deco.border
-          blur: overlay.deco.shadowRange
-          spread: 0
-          color: card.focusedWindow ? overlay.deco.shadowColor : overlay.deco.shadowColorInactive
-          opacity: 1 - overlay.dress
-          visible: overlay.deco.shadow && overlay.deco.shadowRange > 0 && opacity > 0.01 && !card.dragging
+          opacity: card.dressedAway
+          visible: overlay.deco.shadow && spread > 0 && opacity > 0.01 && !card.dragging
+          property vector4d color: Qt.vector4d(tint.r, tint.g, tint.b, tint.a)
+          property vector2d fullSize: Qt.vector2d(card.pxW + 2 * reach, card.pxH + 2 * reach)
+          property vector2d topLeft: Qt.vector2d(spread + corner, spread + corner)
+          property vector2d bottomRight: Qt.vector2d(card.pxW + 2 * reach - (spread + corner), card.pxH + 2 * reach - (spread + corner))
+          property real radius: corner
+          property real range: spread
+          property real shadowPower: overlay.deco.shadowPower
+          property real roundingPower: overlay.deco.roundingPower
+          fragmentShader: Qt.resolvedUrl("deco/shadow.frag.qsb")
         }
 
-        Rectangle {
+        ShaderEffect {
+          readonly property int thickness: Math.round(overlay.deco.border * surface.hyprScale)
+          readonly property color tint: card.focusedWindow ? overlay.deco.activeBorder : overlay.deco.inactiveBorder
+          x: -thickness / surface.hyprScale
+          y: -thickness / surface.hyprScale
+          width: (card.pxW + 2 * thickness) / surface.hyprScale
+          height: (card.pxH + 2 * thickness) / surface.hyprScale
           z: -1
-          anchors.fill: parent
-          anchors.margins: -overlay.deco.border
-          radius: card.radius + overlay.deco.border
-          color: "transparent"
-          border.width: overlay.deco.border
-          border.color: card.focusedWindow ? overlay.deco.activeBorder : overlay.deco.inactiveBorder
-          opacity: 1 - overlay.dress
-          visible: overlay.deco.border > 0 && opacity > 0.01 && !card.dragging
+          opacity: card.dressedAway
+          visible: thickness > 0 && opacity > 0.01 && !card.dragging
+          property vector4d color: Qt.vector4d(tint.r, tint.g, tint.b, tint.a)
+          property vector2d fullSize: Qt.vector2d(card.pxW + 2 * thickness, card.pxH + 2 * thickness)
+          property real radius: card.pxRound > 0 ? card.pxRound + thickness : 0
+          property real radiusOuter: (card.radius + overlay.deco.border) * surface.hyprScale
+          property real thick: thickness
+          property real roundingPower: overlay.deco.roundingPower
+          fragmentShader: Qt.resolvedUrl("deco/border.frag.qsb")
         }
 
         // What the compositor blurs behind this window: the piece of the
@@ -831,7 +889,11 @@ PanelWindow {
             // than all eight captures put together. On the clock instead, they
             // still read as alive and the surface redraws a dozen times a
             // second rather than sixty.
-            live: false
+            // Except right at either end, where the card is about to hand over
+            // to the window itself (or has just taken over from it): there,
+            // a card a twelfth of a second stale is a visible tick as the
+            // real window replaces it. Live for those few frames only.
+            live: card.shown && overlay.opened && overlay.t < 0.15
           }
 
           Connections {
