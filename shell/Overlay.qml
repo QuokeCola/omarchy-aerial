@@ -112,6 +112,7 @@ Scope {
         workspace: top.workspace.id,
         monitor: mon.name,
         active: top.activated === true,
+        floating: (top.lastIpcObject || {}).floating === true,
         // Hyprland reports global coordinates; a surface covers one monitor.
         x: rect.x - mon.x,
         y: rect.y - mon.y,

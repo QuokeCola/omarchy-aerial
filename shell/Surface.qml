@@ -58,18 +58,19 @@ PanelWindow {
   // Live: redrawn whenever what it covers changes, which during a swipe is
   // every frame. A machine that struggles wants the `polish` branch.
   readonly property bool glass: overlay.deco.blur === true
-  // Measured, not derived: behind a see-through window, Hyprland's result
-  // reads as its blur with a faint copy of the unblurred scene in it.
-  readonly property real blurScale: 1
-  readonly property real sharpness: 0
+  // Measured, not derived: against screenshots of Hyprland blurring a
+  // floating terminal over a static scene, the port matches best — to within
+  // one level of brightness — at twice the configured size. Everything else
+  // it takes as configured.
+  readonly property real blurScale: 2
 
   // A floating window's card is on screen, so the blur behind floating
   // windows — which includes the tiled ones — has to run.
   readonly property bool floatingShown: {
     if (!surface.glass) return false
-    for (let i = 0; i < cards.count; i++) {
-      const card = cards.itemAt(i)
-      if (card && card.shown && card.floating) return true
+    for (let i = 0; i < floatCards.count; i++) {
+      const card = floatCards.itemAt(i)
+      if (card && card.shown) return true
     }
     return false
   }
@@ -87,9 +88,11 @@ PanelWindow {
   // Every card on screen has its first frame. Until then the desktop behind
   // must stay visible, or a window whose capture is late blinks out.
   readonly property bool captured: {
-    for (let i = 0; i < cards.count; i++) {
-      const card = cards.itemAt(i)
-      if (card && card.waiting) return false
+    for (const list of [tiledCards, floatCards]) {
+      for (let i = 0; i < list.count; i++) {
+        const card = list.itemAt(i)
+        if (card && card.waiting) return false
+      }
     }
     return true
   }
@@ -575,12 +578,24 @@ PanelWindow {
       Item {
         id: tiledLayer
         anchors.fill: parent
+
+        Repeater {
+          id: tiledCards
+          model: surface.monitorWindows.filter(w => !w.floating)
+          delegate: cardDelegate
+        }
       }
     }
 
     Item {
       id: floatLayer
       anchors.fill: parent
+
+      Repeater {
+        id: floatCards
+        model: surface.monitorWindows.filter(w => w.floating)
+        delegate: cardDelegate
+      }
     }
 
     // Behind a tiled window: the desktop and the strip.
@@ -617,21 +632,20 @@ PanelWindow {
     }
 
     // ------------------------------------------------------------ the windows
-    Repeater {
-      id: cards
-      model: surface.monitorWindows
+    // One card, drawn in whichever layer its window belongs to.
+    Component {
+      id: cardDelegate
 
-      delegate: Item {
+      Item {
         id: card
         required property var modelData
         // Where the window really is right now, which can be fresher than the
         // snapshot the card was built from.
         readonly property var real: overlay.geo[card.modelData.key] || card.modelData
         readonly property bool focusedWindow: card.real.active === true
-        readonly property bool floating: card.real.floating === true
-        // Floating over tiled, the way Hyprland stacks them, so a floating
-        // card can blur the tiled ones beneath it.
-        parent: card.floating ? floatLayer : tiledLayer
+        // Which layer it is in: floating over tiled, as Hyprland stacks them,
+        // so each card's blur has the right things behind it.
+        readonly property bool floating: card.modelData.floating === true
         // Shown, but nothing captured to show yet.
         readonly property bool waiting: card.shown && !shot.hasContent
         readonly property var slot: surface.slots[card.modelData.key] || null
@@ -752,8 +766,6 @@ PanelWindow {
           }
           property vector2d size: Qt.vector2d(width, height)
           property real radius: card.radius
-          property var sharp: card.floating ? floatBlur.input : baseBlur.input
-          property real sharpness: surface.sharpness
           fragmentShader: Qt.resolvedUrl("blur/frost.frag.qsb")
         }
 

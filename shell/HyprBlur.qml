@@ -32,8 +32,6 @@ Item {
   property real vibrancyDarkness: 0
 
   readonly property Item output: finished
-  // What went in, unblurred, at the same size.
-  readonly property Item input: captured
 
   readonly property int levels: Math.max(1, Math.min(4, blur.passes))
 

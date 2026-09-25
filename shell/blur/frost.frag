@@ -9,14 +9,11 @@ layout(std140, binding = 0) uniform buf {
     vec4 area;       // where the card is, in the blurred texture's 0..1
     vec2 size;       // the card's size, in pixels
     float radius;    // its corner radius, in pixels
-    float sharpness; // how much of the unblurred scene shows through
 };
 layout(binding = 1) uniform sampler2D source;
-layout(binding = 2) uniform sampler2D sharp;
 
 void main() {
-    vec2 uv = area.xy + qt_TexCoord0 * area.zw;
-    vec4 color = mix(texture(source, uv), texture(sharp, uv), sharpness);
+    vec4 color = texture(source, area.xy + qt_TexCoord0 * area.zw);
     vec2 p = (qt_TexCoord0 - 0.5) * size;
     vec2 q = abs(p) - (size * 0.5 - vec2(radius));
     float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
