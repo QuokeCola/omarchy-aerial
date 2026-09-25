@@ -62,7 +62,7 @@ Scope {
     target: root
     property: "reveal"
     to: 1
-    duration: 70
+    duration: 40
     easing.type: Easing.OutCubic
   }
 
@@ -182,6 +182,7 @@ Scope {
         h: rect.h,
         active: active,
         floating: (top.lastIpcObject || {}).floating === true,
+        title: top.title || "",
         opacity: tagged ? (active ? 0.985 : 0.96) : 1,
       }
     }
@@ -252,8 +253,28 @@ Scope {
   property var workspaces: []
   property var plans: ({})
 
+  // The cards are kept between openings, not rebuilt each time: building one
+  // opens a capture of its window, and the first frame of a new capture takes
+  // long enough that a short swipe was over before the overview could appear.
+  // So the snapshot is only replaced when what is there has changed — a
+  // window opened, closed, or moved to another desktop — and otherwise the
+  // cards, their captures and their last frames are all still there. Where
+  // each window is, and what it is called, come from the live model anyway.
+  function sameWindows(a, b) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i], y = b[i]
+      if (x.key !== y.key || x.workspace !== y.workspace || x.monitor !== y.monitor || x.floating !== y.floating)
+        return false
+    }
+    return true
+  }
+
   function sync() {
-    root.shot = root.liveShot
+    const next = root.liveShot
+    if (!root.sameWindows(root.shot, next)) root.shot = next
+    // And a fresh frame of each, now: the one they kept is from last time.
+    root.beat++
     root.workspaces = root.liveWorkspaces
     root.plans = root.livePlans
     if (root.stageId <= 0 && Hyprland.focusedWorkspace) root.stageId = Hyprland.focusedWorkspace.id
@@ -261,13 +282,13 @@ Scope {
     // Start on the window you were already using, so pressing enter straight
     // away puts you back rather than nowhere.
     if (root.selectedKey === "") {
-      const active = root.shot.find(w => w.active)
+      const active = root.shot.find(w => root.geo[w.key] && root.geo[w.key].active)
       if (active) root.selectedKey = active.key
     }
   }
 
   function forget() {
-    root.shot = []
+    // Not the snapshot: the cards stay, ready for next time.
     root.workspaces = []
     root.plans = ({})
     root.selectedKey = ""
@@ -410,7 +431,30 @@ Scope {
   // The desktop slide is over, landed or sprung back: put the overview away,
   // which hands the screen back to the real windows exactly where the cards
   // stand.
-  function endDeskSlide() { if (root.service && root.service.deskSlide) root.service.deskSlide = false }
+  function endDeskSlide() {
+    if (!root.service || !root.service.deskSlide) return
+    // Not until the compositor is on the desktop the slide landed on, or for a
+    // frame the old one shows through as the overview goes.
+    const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+    if (root.stageId > 0 && here !== root.stageId) {
+      switchWait.restart()
+      return
+    }
+    switchWait.stop()
+    root.service.deskSlide = false
+  }
+
+  Connections {
+    target: Hyprland
+    function onFocusedWorkspaceChanged() { if (switchWait.running) root.endDeskSlide() }
+  }
+
+  // However long the compositor takes, not longer than this.
+  Timer {
+    id: switchWait
+    interval: 250
+    onTriggered: if (root.service) root.service.deskSlide = false
+  }
 
   // Past the first or last workspace, and past one workspace per swipe, it
   // gives a little and no more, the way a scroll view does at its ends.
@@ -487,7 +531,8 @@ Scope {
 
   // Past half way it goes on; short of it, a flick in the same direction
   // still does. A flick back the other way always wins.
-  readonly property real slideFlick: 2.2
+  // In workspaces per second, so it scales with how far a workspace is.
+  readonly property real slideFlick: 1.2
   // Where the fingers have put the slide, and how fast it was moving on
   // screen, in workspaces per second.
   property real slideGoal: 0
@@ -507,17 +552,14 @@ Scope {
     const next = root.stageIndex + to
     if (next < 0 || next >= root.lanes.length) to = 0
 
-    // Tell the compositor now, not when the slide lands: it switches under the
-    // overview while the slide finishes, and is there by the time you close.
-    if (to !== 0) Hyprland.dispatch('hl.dsp.focus({ workspace = "' + root.lanes[next] + '" })')
 
     // Let go, the spring loosens and lands with a bounce, keeping the speed
     // it had — topped up by a flick faster than it had caught up to.
     root.slideGoal = to
     if (!slider.running) slider.value = root.slide
-    slider.stiffness = 22
-    slider.damping = 0.86
-    slider.velocity = Math.max(-10, Math.min(10, velocity))
+    slider.stiffness = 18
+    slider.damping = 0.9
+    slider.velocity = Math.max(-6, Math.min(6, velocity))
     // Running before the fingers are let go of, so the cards never see a
     // frame where neither is moving them.
     slider.follow(to)
@@ -545,6 +587,11 @@ Scope {
     if (to !== 0) {
       const next = root.lanes[root.stageIndex + to]
       if (next !== undefined) {
+        // Only now, with the slide landed and the overview covering all of
+        // it. Told at the lift, the compositor switched at once — and on a
+        // short swipe the overview was not up yet, so the desktop simply
+        // vanished before the slide it was meant to be hidden behind.
+        Hyprland.dispatch('hl.dsp.focus({ workspace = "' + next + '" })')
         root.stageId = next
         // The selection moves to the desktop you are looking at, so enter
         // goes somewhere on it.

@@ -101,7 +101,7 @@ PanelWindow {
 
   Timer {
     id: settleFrame
-    interval: 34
+    interval: 24
     onTriggered: if (surface.canShow) surface.ready = true
   }
 
@@ -202,7 +202,14 @@ PanelWindow {
 
   // Everything on this screen that the filter leaves standing, whichever
   // desktop it is on. What the slots are laid out from.
-  readonly property var matching: surface.monitorWindows.filter(w => overlay.matches(w))
+  //
+  // With each window where it is now: the cards outlive the overview between
+  // openings (see `sync`), so the snapshot they were built from can be older
+  // than the last time a window moved.
+  readonly property var matching: surface.monitorWindows.filter(w => overlay.matches(w)).map(w => {
+    const now = overlay.geo[w.key]
+    return now ? Object.assign({}, w, { x: now.x, y: now.y, w: now.w, h: now.h }) : w
+  })
 
   // Room for the workspace strip along the top, the way Mission Control does.
   readonly property real stripHeight: surface.leading ? Math.max(96, surface.height * 0.15) : 24
@@ -379,8 +386,11 @@ PanelWindow {
             visible: false
             source: overlay.wallpaperUrl
             fillMode: Image.PreserveAspectCrop
-            sourceSize.width: Math.ceil(surface.width * surface.pixelRatio)
-            sourceSize.height: Math.ceil(surface.height * surface.pixelRatio)
+            // From the screen, not the surface: a hidden surface is no size at
+            // all, and a size that changes each time the overview opens throws
+            // the decoded wallpaper away and decodes it again, every time.
+            sourceSize.width: Math.ceil((surface.screenInfo ? surface.screenInfo.width : surface.width) * surface.pixelRatio)
+            sourceSize.height: Math.ceil((surface.screenInfo ? surface.screenInfo.height : surface.height) * surface.pixelRatio)
             smooth: true
             asynchronous: true
             cache: true
@@ -897,8 +907,14 @@ PanelWindow {
             // sliding between desktops at no zoom: live, every window on
             // screen is captured every frame, which is exactly the load the
             // clock exists to avoid, and the slide stutters under it.
-            live: card.shown && overlay.opened && !overlay.deskSliding
-                  && overlay.t > 0.0005 && overlay.t < 0.15
+            //
+            // And until its first frame is in: a card waits for its capture
+            // before the overview can appear, and waiting for the clock to
+            // come round was most of the wait. Live, the first frame arrives
+            // as soon as the compositor can give it.
+            live: card.shown && overlay.opened
+                  && (!shot.hasContent
+                      || (!overlay.deskSliding && overlay.t > 0.0005 && overlay.t < 0.15))
           }
 
           Connections {
@@ -1057,7 +1073,7 @@ PanelWindow {
               textFormat: Text.PlainText
               anchors.verticalCenter: parent.verticalCenter
               width: Math.min(implicitWidth, card.width - 40)
-              text: card.modelData.title
+              text: card.real.title !== undefined ? card.real.title : card.modelData.title
               elide: Text.ElideRight
               color: card.picked ? "#F7F4EC" : "#C9C3B9"
               font.family: Style.font.family
