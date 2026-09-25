@@ -522,7 +522,16 @@ Scope {
       sideWatchdog.stop()
       // The speed the spread had on screen as the fingers lifted, the same
       // as swiping up: none if they had come to rest first.
-      root.releaseSlide(cancelled || Date.now() - root.slideAt > 80 ? 0 : root.slideSpeed, cancelled)
+      //
+      // Or the gesture's own measure, if that is faster: it is taken over the
+      // last 90ms, where the on-screen speed is smoothed from zero, which on a
+      // swipe only a few events long reads a real flick as a slow drag.
+      {
+        const resting = Date.now() - root.slideAt > 80
+        const seen = resting ? 0 : root.slideSpeed
+        const measured = resting ? 0 : velocity
+        root.releaseSlide(cancelled ? 0 : (Math.abs(measured) > Math.abs(seen) ? measured : seen), cancelled)
+      }
       break
     }
   }
