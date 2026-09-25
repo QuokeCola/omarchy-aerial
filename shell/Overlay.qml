@@ -359,12 +359,15 @@ Scope {
 
   // Past the first or last workspace, and past one workspace per swipe, it
   // gives a little and no more, the way a scroll view does at its ends.
-  readonly property real give: 0.12
+  // The same stretch as swiping up past open: one-to-one at first, then less
+  // and less, springing back when the fingers lift.
+  readonly property real give: 0.3
+  function stretched(over) { return root.give * (1 - 1 / (1 + over / root.give)) }
   function bounded(value) {
     const low = Math.max(-1, -root.stageIndex)
     const high = Math.min(1, root.lanes.length - 1 - root.stageIndex)
-    if (value > high) return high + root.give * (1 - Math.exp(-(value - high) / root.give))
-    if (value < low) return low - root.give * (1 - Math.exp(-(low - value) / root.give))
+    if (value > high) return high + root.stretched(value - high)
+    if (value < low) return low - root.stretched(low - value)
     return value
   }
 
@@ -389,10 +392,9 @@ Scope {
       root.peekWanted = -1
       root.slideFrom = root.slide
       root.slideGoal = root.slide
+      slider.hold()
       slider.value = root.slide
       slider.velocity = 0
-      slider.stiffness = 32
-      slider.damping = 0.78
       root.sliding = true
       sideWatchdog.restart()
       break
@@ -400,7 +402,7 @@ Scope {
     case "move":
       if (!root.sideOwned) return
       root.slideGoal = root.bounded(root.slideFrom + value)
-      slider.follow(root.slideGoal)
+      slider.value = root.slideGoal
       sideWatchdog.restart()
       break
 
@@ -440,7 +442,7 @@ Scope {
     root.slideGoal = to
     if (!slider.running) slider.value = root.slide
     slider.stiffness = 16
-    slider.damping = 0.68
+    slider.damping = 0.82
     const way = Math.sign(to - slider.value)
     const carry = Math.max(-10, Math.min(10, velocity))
     if (way !== 0 && Math.sign(carry) === way && Math.abs(carry) > Math.abs(slider.velocity))

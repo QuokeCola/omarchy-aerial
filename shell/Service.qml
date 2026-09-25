@@ -103,23 +103,24 @@ Item {
     service.glideTo(false, 0)
   }
 
-  // Past fully open the overview gives a little rather than stopping dead
-  // under the fingers, and settles back when they lift.
-  readonly property real stretch: 0.05
+  // Past fully open the overview keeps going with the fingers — the cards go
+  // on shrinking toward the strip — but gives less and less for each
+  // centimetre, the way a scroll view does past its end, and springs back to
+  // its proper size when they lift. Starts out one-to-one, so there is no
+  // point where it visibly catches; `stretch` is how far it could ever get.
+  readonly property real stretch: 0.3
   function rubber(value) {
     if (value <= 1) return value
-    return 1 + service.stretch * (1 - Math.exp(-(value - 1) / service.stretch))
+    const over = value - 1
+    return 1 + service.stretch * (1 - 1 / (1 + over / service.stretch))
   }
 
   function toggle() { service.goal > 0.5 ? service.hide() : service.show() }
 
-  // How the spring feels. Following the fingers it is tight, so it trails
-  // them by a hair and settles with a small give when they stop; let go, it
-  // loosens, and lands with a visible bounce.
-  readonly property real followStiffness: 32
-  readonly property real followDamping: 0.78
+  // How it lands once the fingers lift: back from a stretch, or the rest of
+  // the way open or closed.
   readonly property real landStiffness: 17
-  readonly property real landDamping: 0.66
+  readonly property real landDamping: 0.82
 
   // Head for open or closed. The spring already has whatever speed the
   // fingers gave it, so letting go is only a change of target; `velocity` (in
@@ -139,14 +140,10 @@ Item {
     tSpring.follow(target)
   }
 
-  // Fingers down: from here the spring chases them.
+  // Fingers down: the overview is theirs, exactly, until they lift.
   function grab() {
-    if (!tSpring.running) {
-      tSpring.value = service.t
-      tSpring.velocity = 0
-    }
-    tSpring.stiffness = service.followStiffness
-    tSpring.damping = service.followDamping
+    tSpring.hold()
+    tSpring.velocity = 0
     service.goal = service.t
   }
 
@@ -382,8 +379,10 @@ Item {
 
     switch (phase) {
     case "begin":
-      if (opening) {
-        if (service.open) return
+      if (opening && service.open) {
+        // Already open: swiping up again is only the stretch, and springs
+        // back. Nothing is re-read, so nothing on screen is rebuilt.
+      } else if (opening) {
         service.everything = wantsEverything
         service.aim()
         service.arming()
@@ -406,10 +405,18 @@ Item {
 
     case "move":
       if (service.scrub !== who) return
-      service.goal = opening
-        ? service.rubber(service.scrubFrom + (1 - service.scrubFrom) * value)
-        : service.scrubFrom * (1 - Math.min(1, value))
-      tSpring.follow(service.goal)
+      if (opening) {
+        // The first full swipe's worth of travel covers whatever was left to
+        // open; everything past it is stretch. Already open, it is all stretch.
+        const from = service.scrubFrom
+        const raw = from >= 0.999 ? 1 + value
+                  : value <= 1 ? from + (1 - from) * value
+                  : 1 + (value - 1)
+        service.goal = service.rubber(raw)
+      } else {
+        service.goal = service.scrubFrom * (1 - Math.min(1, value))
+      }
+      tSpring.value = service.goal
       break
 
     case "end":

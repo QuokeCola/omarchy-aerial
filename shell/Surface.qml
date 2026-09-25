@@ -560,13 +560,27 @@ PanelWindow {
 
         // The whole animation: where it is, blended with where it goes — plus
         // however far it has been dragged since it was picked up.
-        x: (card.slot ? card.real.x + (card.slot.x - card.real.x) * overlay.t : card.real.x)
+        // Up to fully open, the window's place blended with its slot. Past
+        // it — the fingers still pushing — the card goes on shrinking about
+        // its own middle and drifting up toward the strip, rather than
+        // carrying on along the same line, which would shrink a big window
+        // with a small slot to nothing.
+        readonly property real along: Math.min(1, overlay.t)
+        readonly property real beyond: Math.max(0, overlay.t - 1)
+        readonly property real squeeze: 1 - card.beyond * 0.7
+        readonly property real baseW: card.slot ? card.real.w + (card.slot.w - card.real.w) * card.along : card.real.w
+        readonly property real baseH: card.slot ? card.real.h + (card.slot.h - card.real.h) * card.along : card.real.h
+
+        x: (card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
+           + card.baseW * (1 - card.squeeze) / 2
            + card.shift
            + (card.dragging ? dragger.activeTranslation.x : 0)
-        y: (card.slot ? card.real.y + (card.slot.y - card.real.y) * overlay.t : card.real.y)
+        y: (card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
+           + card.baseH * (1 - card.squeeze) / 2
+           - card.beyond * surface.height * 0.12
            + (card.dragging ? dragger.activeTranslation.y : 0)
-        width: card.slot ? card.real.w + (card.slot.w - card.real.w) * overlay.t : card.real.w
-        height: card.slot ? card.real.h + (card.slot.h - card.real.h) * overlay.t : card.real.h
+        width: card.baseW * card.squeeze
+        height: card.baseH * card.squeeze
 
         Behavior on x { enabled: overlay.active && !card.dragging && !overlay.moving; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on y { enabled: overlay.active && !card.dragging; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
