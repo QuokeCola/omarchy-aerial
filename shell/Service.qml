@@ -275,7 +275,16 @@ Item {
       // Only means anything with the overview open; otherwise Hyprland's own
       // workspace swipe has it, and this is a stray from a gesture that began
       // just as it closed.
-      if (phase === "begin" && !service.open) return
+      if (phase === "begin" && !service.open) {
+        // And if it reached us at all, Hyprland thinks the slide is still
+        // ours — a shell restarted mid-reload can leave it that way. Hand the
+        // swipe back so the next one switches workspaces again.
+        if (!service.showing) {
+          service.sidewaysSent = ""
+          service.sendSideways()
+        }
+        return
+      }
       service.sideSwipe(phase, raw, velocity || 0, cancelled)
       return
     }
