@@ -602,7 +602,7 @@ PanelWindow {
           // fingers rather than jumping from tile to tile when you let go.
           Rectangle {
             visible: overlay.stageIndex >= 0
-            x: surface.tileX(Math.max(0, overlay.stageIndex + overlay.slide))
+            x: surface.tileX(Math.max(0, overlay.laneTile(overlay.stageIndex + overlay.slide)))
             y: surface.tileTop
             width: surface.tileWidth
             height: surface.tileHeight
