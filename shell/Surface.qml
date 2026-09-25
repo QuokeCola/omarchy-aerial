@@ -522,8 +522,11 @@ PanelWindow {
           anchors.fill: parent
           radius: card.radius
           // Under the capture, so a window whose first frame has not arrived
-          // yet reads as a tile and not as a hole.
-          color: "#101014"
+          // yet reads as a tile and not as a hole — but only as the overview
+          // comes in. At the start of a swipe the card sits exactly on its
+          // real window, which is still showing, so an empty card should let
+          // that window through rather than flash a dark block over it.
+          color: shot.hasContent ? "#101014" : Qt.rgba(0.063, 0.063, 0.078, overlay.veil)
 
           ScreencopyView {
             id: shot

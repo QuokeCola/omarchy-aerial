@@ -203,6 +203,18 @@ function __aerial_horizontal(mode)
   _G.__aerial_h = mode
 end
 
+-- The overview animates itself, frame by frame, from the fingers. Omarchy
+-- fades every layer surface in and out on top of whatever it draws, the way
+-- it does for menus — which on this surface is a second, fixed-speed fade
+-- fighting the one following your hand: the overview arrives washed out,
+-- catches up, and flickers on the way out. The same rule Omarchy gives its own
+-- bar turns that off. Once per Lua state; a config reload drops it and this
+-- file runs again.
+if not _G.__aerial_layer then
+  hl.layer_rule({ match = { namespace = "^omarchy-aerial$" }, no_anim = true, animation = "none" })
+  _G.__aerial_layer = true
+end
+
 -- Registering over an existing gesture is refused rather than replaced, so ours
 -- has to come off first. The config's Lua state outlives an eval, and a config
 -- reload drops both the flag and the gestures.
