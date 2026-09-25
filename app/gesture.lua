@@ -177,10 +177,11 @@ local function both(t)
   return t
 end
 
--- Three fingers sideways means two different things. With the overview open
--- it slides the spread from one workspace to the next under your fingers;
--- with it closed it is Hyprland's own workspace swipe. The shell says which,
--- through this, whenever the overview opens or closes.
+-- Three fingers sideways slide from one workspace to the next under your
+-- fingers, overview open or not; the shell draws it either way (see
+-- `deskSwipe` in shell/Service.qml for why not Hyprland's own swipe). The
+-- shell says what to register through this: "slide" for ours, "workspace"
+-- for Hyprland's, anything else for none.
 --
 -- Hyprland raises both of the errors that matter here past pcall: removing a
 -- gesture that is not there, and adding one a previous gesture shadows. So

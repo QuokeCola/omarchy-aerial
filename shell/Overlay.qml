@@ -390,13 +390,25 @@ Scope {
   function laneOf(workspaceId) {
     const index = root.lanes.indexOf(workspaceId)
     if (index < 0 || root.stageIndex < 0) return 99
-    return index - (root.stageIndex + root.slide)
+    return index - (root.stageIndex + root.shownSlide)
   }
+
+  // Where the slide is drawn: held at nothing until the overview can appear,
+  // then let catch up, for the same reason as `t` — on the desktop the fingers
+  // are already a fair way across by the time every capture is in.
+  readonly property real shownSlide: root.slide * root.reveal
 
   // Sliding is for the one-desktop spread. Every window at once, or a search
   // across every desktop, has nothing to slide between.
-  readonly property bool canSlide: root.active && !root.everything && root.filter === ""
+  readonly property bool canSlide: (root.active || root.deskSliding) && !root.everything && root.filter === ""
                                    && root.dragKey === "" && root.stageIndex >= 0
+  // Sliding on the bare desktop, the overview up at no zoom just for it.
+  readonly property bool deskSliding: root.service ? root.service.deskSlide : false
+
+  // The desktop slide is over, landed or sprung back: put the overview away,
+  // which hands the screen back to the real windows exactly where the cards
+  // stand.
+  function endDeskSlide() { if (root.service && root.service.deskSlide) root.service.deskSlide = false }
 
   // Past the first or last workspace, and past one workspace per swipe, it
   // gives a little and no more, the way a scroll view does at its ends.
@@ -421,7 +433,10 @@ Scope {
     switch (phase) {
     case "begin":
       root.sideOwned = root.canSlide
-      if (!root.sideOwned) return
+      if (!root.sideOwned) {
+        root.endDeskSlide()
+        return
+      }
       // Caught mid-settle: finish that slide where it was heading first, so
       // this one starts from a whole workspace.
       if (slider.running) {
@@ -544,7 +559,10 @@ Scope {
     onValueChanged: root.slide = slider.value
     // Fingers resting mid-slide let the spring settle too; that is not a
     // landing.
-    onSettled: if (!root.sliding) root.finishSlide(slider.target)
+    onSettled: if (!root.sliding) {
+      root.finishSlide(slider.target)
+      root.endDeskSlide()
+    }
   }
 
   // A lift that never arrives must not leave the spread half way between two
