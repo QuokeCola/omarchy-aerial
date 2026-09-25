@@ -58,6 +58,36 @@ PanelWindow {
     return [Number(r[0]) || 0, Number(r[1]) || 0, Number(r[2]) || 0, Number(r[3]) || 0]
   }
 
+  // Not drawn at all until it can take the desktop's place in one frame:
+  // every card on screen captured, the wallpaper decoded, and a frame more
+  // for anything drawn from those. Drawn any sooner, the first frames of a
+  // swipe show the real windows through cards that are still empty — two of
+  // everything — and then flash as it all arrives. It is a few milliseconds;
+  // then it appears already following the fingers. Never longer than
+  // `giveUp`, whatever does not arrive.
+  property bool ready: false
+  readonly property bool canShow: overlay.opened && surface.captured
+                                  && (overlay.wallpaper === "" || solid.status === Image.Ready)
+  onCanShowChanged: if (surface.canShow && !surface.ready) settleFrame.restart()
+
+  Timer {
+    id: settleFrame
+    interval: 34
+    onTriggered: if (surface.canShow) surface.ready = true
+  }
+
+  Timer {
+    id: giveUp
+    interval: 250
+    running: overlay.opened && !surface.ready
+    onTriggered: surface.ready = true
+  }
+
+  Connections {
+    target: overlay
+    function onOpenedChanged() { if (!overlay.opened) surface.ready = false }
+  }
+
   // Every card on screen has its first frame. Until then the desktop behind
   // must stay visible, or a window whose capture is late blinks out.
   readonly property bool captured: {
@@ -252,6 +282,7 @@ PanelWindow {
   Item {
     id: stage
     anchors.fill: parent
+    opacity: surface.ready ? 1 : 0
     focus: surface.leading
 
     Keys.onPressed: function (event) { if (surface.leading) overlay.onKey(event) }
@@ -539,7 +570,13 @@ PanelWindow {
         readonly property var real: overlay.geo[card.modelData.key] || card.modelData
         readonly property bool focusedWindow: card.real.active === true
         // Shown, but nothing captured to show yet.
-        readonly property bool waiting: card.shown && !shot.hasContent
+        // Standing in for a window that is actually on this screen right now.
+        // A scrolling layout keeps windows parked off either edge; those
+        // cover nothing, and some never produce a frame to wait for.
+        readonly property bool onScreen: card.shown
+                                         && card.real.x < surface.width && card.real.x + card.real.w > 0
+                                         && card.real.y < surface.height && card.real.y + card.real.h > 0
+        readonly property bool waiting: card.onScreen && !shot.hasContent
         readonly property var slot: surface.slots[card.modelData.key] || null
         // On the desktop being shown, which peeking changes without rebuilding
         // anything: the card is already here, it just fades in.
