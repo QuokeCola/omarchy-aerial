@@ -145,6 +145,7 @@ Scope {
         w: rect.w,
         h: rect.h,
         active: active,
+        floating: (top.lastIpcObject || {}).floating === true,
         opacity: tagged ? (active ? 0.985 : 0.96) : 1,
       }
     }

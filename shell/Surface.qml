@@ -54,12 +54,13 @@ PanelWindow {
   // piece of a blurred wallpaper that the card is over, and a frosted window
   // stays frosted all the way into the spread.
   //
-  // The blur itself is drawn once. What each card redraws as it moves is only
-  // its own piece of that, which is why this is affordable at all; it is
-  // still one more texture per card per frame, so turn it off on a machine
-  // that struggles.
+  // Live: what is behind a card is blurred as it changes, not once — see
+  // `base` below. A machine that struggles wants the `polish` branch, which
+  // has none of this.
   readonly property bool glass: overlay.deco.blur !== false
   // Hyprland's blur of `size` over `passes` reaches roughly this far.
+  // How far past a card's edges its blur reads from.
+  readonly property int frostPad: surface.frostRadius
   readonly property int frostRadius: Math.max(8, Math.min(64,
     Math.round((overlay.deco.blurSize || 8) * Math.pow(2, Math.max(0, (overlay.deco.blurPasses || 1) - 1)) / 1.5)))
 
@@ -271,288 +272,305 @@ PanelWindow {
 
     Keys.onPressed: function (event) { if (surface.leading) overlay.onKey(event) }
 
-    // The desktop goes away: the windows you are about to see spread out are
-    // still sitting there underneath, and two of everything reads as a mess.
+    // Every card is frosted with a live blur of whatever is behind it, the
+    // way Hyprland draws a see-through window, and stacked the way Hyprland
+    // stacks them, so a floating window blurs the tiled ones beneath it too:
     //
-    // So from the very first frame the part of the screen windows live in is
-    // painted over with the wallpaper exactly as the desktop draws it — same
-    // image, same crop — and the cards, standing exactly where their windows
-    // are and dressed the way Hyprland dresses them, take the windows' place.
-    // Nothing fades: the desktop you were looking at simply becomes the
-    // overview, and only then starts to move. The bar's strip is left to fade,
-    // since there is no card standing in for the bar.
+    //   base        the desktop and the strip — behind every card
+    //   tiledLayer  tiled windows' cards, which never overlap one another
+    //   floatLayer  floating windows' cards, over all of it
     //
-    // Then the blur comes in over it. Loaded at the screen's real resolution
-    // and blurred properly, into a layer drawn once, since the wallpaper does
-    // not change while the overview is open.
+    // Each card blurs what is behind it itself, redrawn whenever that changes
+    // — during a swipe, every frame. That is the price of this branch.
     Item {
+      id: lower
       anchors.fill: parent
-      visible: overlay.wallpaper !== ""
 
-      // One image, decoded once: the three below share it through the image
-      // cache, since source and size are the same.
-      Image {
-        id: wall
-        anchors.fill: parent
-        visible: false
-        source: overlay.wallpaperUrl
-        fillMode: Image.PreserveAspectCrop
-        sourceSize.width: Math.ceil(surface.width * surface.pixelRatio)
-        sourceSize.height: Math.ceil(surface.height * surface.pixelRatio)
-        smooth: true
-        asynchronous: true
-        cache: true
-      }
-
-      // The whole screen, bar strip included, fading with the swipe.
-      Image {
-        anchors.fill: parent
-        source: wall.source
-        opacity: overlay.veil
-        fillMode: wall.fillMode
-        sourceSize: wall.sourceSize
-        smooth: true
-        asynchronous: true
-        cache: true
-      }
-
-      // Where the windows are: solid from the first frame, as soon as every
-      // card is ready to stand in for its window.
+      // The desktop and the strip: what is behind every card.
       Item {
-        id: workArea
-        x: surface.reserved[0]
-        y: surface.reserved[1]
-        width: surface.width - surface.reserved[0] - surface.reserved[2]
-        height: surface.height - surface.reserved[1] - surface.reserved[3]
-        clip: true
-        opacity: overlay.opened && surface.captured && solid.status === Image.Ready ? 1 : overlay.veil
-
-        Image {
-          id: solid
-          x: -workArea.x
-          y: -workArea.y
-          width: surface.width
-          height: surface.height
-          source: wall.source
-          fillMode: wall.fillMode
-          sourceSize: wall.sourceSize
-          smooth: true
-          asynchronous: true
-          cache: true
-        }
-      }
-
-      // The frosted wallpaper the cards take their backgrounds from. Never
-      // drawn itself; each card draws the piece of it it is over.
-      MultiEffect {
-        id: frost
+        id: base
         anchors.fill: parent
-        source: wall
-        visible: false
-        blurEnabled: surface.glass
-        blur: 1
-        blurMax: surface.frostRadius
-        autoPaddingEnabled: false
-        layer.enabled: surface.glass
-      }
 
-      MultiEffect {
-        anchors.fill: parent
-        source: wall
-        visible: surface.blur > 0
-        opacity: overlay.veil
-        blurEnabled: true
-        blur: 1
-        blurMax: Math.round(64 * surface.blur)
-        autoPaddingEnabled: false
-        layer.enabled: true
-      }
-    }
+        // The desktop goes away: the windows you are about to see spread out are
+        // still sitting there underneath, and two of everything reads as a mess.
+        //
+        // So from the very first frame the part of the screen windows live in is
+        // painted over with the wallpaper exactly as the desktop draws it — same
+        // image, same crop — and the cards, standing exactly where their windows
+        // are and dressed the way Hyprland dresses them, take the windows' place.
+        // Nothing fades: the desktop you were looking at simply becomes the
+        // overview, and only then starts to move. The bar's strip is left to fade,
+        // since there is no card standing in for the bar.
+        //
+        // Then the blur comes in over it. Loaded at the screen's real resolution
+        // and blurred properly, into a layer drawn once, since the wallpaper does
+        // not change while the overview is open.
+        Item {
+          anchors.fill: parent
+          visible: overlay.wallpaper !== ""
 
-    Rectangle {
-      anchors.fill: parent
-      color: "#07070A"
-      opacity: (overlay.wallpaper === "" ? 0.93 : surface.dim) * overlay.veil
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      onClicked: overlay.dismiss()
-    }
-
-    // ------------------------------------------------------------ the strip
-    Item {
-      id: strip
-      width: parent.width
-      height: surface.stripHeight
-      y: -height * (1 - overlay.veil)
-      opacity: overlay.veil
-      visible: surface.leading
-
-      Repeater {
-        model: surface.leading ? overlay.workspaces : []
-
-        delegate: Item {
-          id: space
-          required property var modelData
-          required property int index
-          // The desktop the spread is showing, which sliding moves before the
-          // compositor has caught up.
-          readonly property bool focused: space.modelData.id === overlay.stageWorkspace
-          readonly property bool targeted: overlay.dragTarget === space.modelData.id
-          readonly property bool peeked: overlay.peek === space.modelData.id
-          readonly property var plan: overlay.plans[space.modelData.id] || []
-
-          x: surface.tileX(space.index)
-          y: surface.tileTop
-          width: surface.tileWidth
-          height: surface.tileHeight
-
-          scale: space.targeted ? 1.12 : (space.peeked ? 1.06 : 1)
-          Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-
-          ClippingRectangle {
-            id: tile
+          // One image, decoded once: the three below share it through the image
+          // cache, since source and size are the same.
+          Image {
+            id: wall
             anchors.fill: parent
-            radius: 8
-            color: "#0B0B0E"
+            visible: false
+            source: overlay.wallpaperUrl
+            fillMode: Image.PreserveAspectCrop
+            sourceSize.width: Math.ceil(surface.width * surface.pixelRatio)
+            sourceSize.height: Math.ceil(surface.height * surface.pixelRatio)
+            smooth: true
+            asynchronous: true
+            cache: true
+          }
 
-            // Each desktop is a small picture of the desktop: the same
-            // wallpaper, with a block where each window sits.
+          // The whole screen, bar strip included, fading with the swipe.
+          Image {
+            anchors.fill: parent
+            source: wall.source
+            opacity: overlay.veil
+            fillMode: wall.fillMode
+            sourceSize: wall.sourceSize
+            smooth: true
+            asynchronous: true
+            cache: true
+          }
+
+          // Where the windows are: solid from the first frame, as soon as every
+          // card is ready to stand in for its window.
+          Item {
+            id: workArea
+            x: surface.reserved[0]
+            y: surface.reserved[1]
+            width: surface.width - surface.reserved[0] - surface.reserved[2]
+            height: surface.height - surface.reserved[1] - surface.reserved[3]
+            clip: true
+            opacity: overlay.opened && surface.captured && solid.status === Image.Ready ? 1 : overlay.veil
+
             Image {
-              anchors.fill: parent
-              source: overlay.wallpaperUrl
-              visible: overlay.wallpaper !== ""
-              fillMode: Image.PreserveAspectCrop
-              sourceSize.width: Math.ceil(surface.tileWidth * surface.pixelRatio * 1.5)
+              id: solid
+              x: -workArea.x
+              y: -workArea.y
+              width: surface.width
+              height: surface.height
+              source: wall.source
+              fillMode: wall.fillMode
+              sourceSize: wall.sourceSize
               smooth: true
               asynchronous: true
               cache: true
-              opacity: space.focused || space.peeked ? 0.85 : 0.5
             }
+          }
 
-            Rectangle {
-              anchors.fill: parent
-              color: space.targeted ? Qt.rgba(1, 1, 1, 0.16) : "transparent"
-            }
+          MultiEffect {
+            anchors.fill: parent
+            source: wall
+            visible: surface.blur > 0
+            opacity: overlay.veil
+            blurEnabled: true
+            blur: 1
+            blurMax: Math.round(64 * surface.blur)
+            autoPaddingEnabled: false
+            layer.enabled: true
+          }
+        }
 
-            Repeater {
-              model: space.plan
+        Rectangle {
+          anchors.fill: parent
+          color: "#07070A"
+          opacity: (overlay.wallpaper === "" ? 0.93 : surface.dim) * overlay.veil
+        }
 
-              delegate: Rectangle {
-                id: mini
-                required property var modelData
-                x: mini.modelData.x * tile.width
-                y: mini.modelData.y * tile.height
-                width: Math.max(3, mini.modelData.w * tile.width)
-                height: Math.max(3, mini.modelData.h * tile.height)
-                radius: 3
-                // Dark enough to read as a window against any wallpaper, rather
-                // than a grey square that could be anything.
-                color: mini.modelData.active ? Qt.rgba(0.10, 0.10, 0.13, 0.94)
-                                             : Qt.rgba(0.07, 0.07, 0.09, 0.84)
-                border.width: 1
-                border.color: mini.modelData.active ? Qt.rgba(1, 1, 1, 0.34)
-                                                    : Qt.rgba(1, 1, 1, 0.16)
+        MouseArea {
+          anchors.fill: parent
+          onClicked: overlay.dismiss()
+        }
 
-                IconImage {
+        // ------------------------------------------------------------ the strip
+        Item {
+          id: strip
+          width: parent.width
+          height: surface.stripHeight
+          y: -height * (1 - overlay.veil)
+          opacity: overlay.veil
+          visible: surface.leading
+
+          Repeater {
+            model: surface.leading ? overlay.workspaces : []
+
+            delegate: Item {
+              id: space
+              required property var modelData
+              required property int index
+              // The desktop the spread is showing, which sliding moves before the
+              // compositor has caught up.
+              readonly property bool focused: space.modelData.id === overlay.stageWorkspace
+              readonly property bool targeted: overlay.dragTarget === space.modelData.id
+              readonly property bool peeked: overlay.peek === space.modelData.id
+              readonly property var plan: overlay.plans[space.modelData.id] || []
+
+              x: surface.tileX(space.index)
+              y: surface.tileTop
+              width: surface.tileWidth
+              height: surface.tileHeight
+
+              scale: space.targeted ? 1.12 : (space.peeked ? 1.06 : 1)
+              Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+
+              ClippingRectangle {
+                id: tile
+                anchors.fill: parent
+                radius: 8
+                color: "#0B0B0E"
+
+                // Each desktop is a small picture of the desktop: the same
+                // wallpaper, with a block where each window sits.
+                Image {
+                  anchors.fill: parent
+                  source: overlay.wallpaperUrl
+                  visible: overlay.wallpaper !== ""
+                  fillMode: Image.PreserveAspectCrop
+                  sourceSize.width: Math.ceil(surface.tileWidth * surface.pixelRatio * 1.5)
+                  smooth: true
+                  asynchronous: true
+                  cache: true
+                  opacity: space.focused || space.peeked ? 0.85 : 0.5
+                }
+
+                Rectangle {
+                  anchors.fill: parent
+                  color: space.targeted ? Qt.rgba(1, 1, 1, 0.16) : "transparent"
+                }
+
+                Repeater {
+                  model: space.plan
+
+                  delegate: Rectangle {
+                    id: mini
+                    required property var modelData
+                    x: mini.modelData.x * tile.width
+                    y: mini.modelData.y * tile.height
+                    width: Math.max(3, mini.modelData.w * tile.width)
+                    height: Math.max(3, mini.modelData.h * tile.height)
+                    radius: 3
+                    // Dark enough to read as a window against any wallpaper, rather
+                    // than a grey square that could be anything.
+                    color: mini.modelData.active ? Qt.rgba(0.10, 0.10, 0.13, 0.94)
+                                                 : Qt.rgba(0.07, 0.07, 0.09, 0.84)
+                    border.width: 1
+                    border.color: mini.modelData.active ? Qt.rgba(1, 1, 1, 0.34)
+                                                        : Qt.rgba(1, 1, 1, 0.16)
+
+                    IconImage {
+                      anchors.centerIn: parent
+                      implicitSize: Math.round(Math.min(18, Math.min(mini.width, mini.height) * 0.62))
+                      source: overlay.iconFor(mini.modelData.appId)
+                      visible: source !== "" && mini.width > 16 && mini.height > 14
+                      opacity: space.focused || space.peeked ? 0.95 : 0.7
+                    }
+                  }
+                }
+
+                // An untouched workspace says so, instead of looking broken — and
+                // the one past the end offers itself.
+                Text {
+                  // Window titles are somebody else's string: a browser tab can put
+                  // anything in one. Rendered literally, never interpreted as markup.
+                  textFormat: Text.PlainText
                   anchors.centerIn: parent
-                  implicitSize: Math.round(Math.min(18, Math.min(mini.width, mini.height) * 0.62))
-                  source: overlay.iconFor(mini.modelData.appId)
-                  visible: source !== "" && mini.width > 16 && mini.height > 14
-                  opacity: space.focused || space.peeked ? 0.95 : 0.7
+                  visible: space.plan.length === 0
+                  text: space.modelData.fresh ? "\u002b" : "empty"
+                  color: Qt.rgba(1, 1, 1, space.modelData.fresh ? 0.5 : 0.34)
+                  font.family: Style.font.family
+                  font.pixelSize: space.modelData.fresh
+                                  ? Math.round(Style.font.body * 1.6) : Style.font.caption
                 }
               }
-            }
 
-            // An untouched workspace says so, instead of looking broken — and
-            // the one past the end offers itself.
-            Text {
-              // Window titles are somebody else's string: a browser tab can put
-              // anything in one. Rendered literally, never interpreted as markup.
-              textFormat: Text.PlainText
-              anchors.centerIn: parent
-              visible: space.plan.length === 0
-              text: space.modelData.fresh ? "\u002b" : "empty"
-              color: Qt.rgba(1, 1, 1, space.modelData.fresh ? 0.5 : 0.34)
-              font.family: Style.font.family
-              font.pixelSize: space.modelData.fresh
-                              ? Math.round(Style.font.body * 1.6) : Style.font.caption
+              Rectangle {
+                anchors.fill: parent
+                radius: tile.radius
+                color: "transparent"
+                // The accent ring for the current desktop is drawn once, below,
+                // so it can travel between tiles as you slide.
+                border.width: space.targeted || space.peeked ? 2 : 1
+                border.color: space.targeted ? "#F2EFE7"
+                            : space.peeked ? Qt.rgba(1, 1, 1, 0.5)
+                            : Qt.rgba(1, 1, 1, 0.14)
+              }
+
+              Text {
+                // Window titles are somebody else's string: a browser tab can put
+                // anything in one. Rendered literally, never interpreted as markup.
+                textFormat: Text.PlainText
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.bottom
+                anchors.topMargin: 6
+                text: space.modelData.name
+                color: space.focused ? "#F2EFE7" : "#8D8880"
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.weight: space.focused ? Font.DemiBold : Font.Normal
+              }
+
+              HoverHandler {
+                enabled: overlay.active && !overlay.everything
+                cursorShape: Qt.PointingHandCursor
+                onHoveredChanged: overlay.hoverWorkspace(space.modelData.id, hovered)
+              }
+
+              TapHandler {
+                enabled: overlay.active
+                onTapped: overlay.goToWorkspace(space.modelData.id)
+              }
             }
           }
 
+          // Where you are, as one ring that slides along the strip with your
+          // fingers rather than jumping from tile to tile when you let go.
           Rectangle {
-            anchors.fill: parent
-            radius: tile.radius
+            visible: overlay.stageIndex >= 0
+            x: surface.tileX(Math.max(0, overlay.stageIndex + overlay.slide))
+            y: surface.tileTop
+            width: surface.tileWidth
+            height: surface.tileHeight
+            radius: 8
             color: "transparent"
-            // The accent ring for the current desktop is drawn once, below,
-            // so it can travel between tiles as you slide.
-            border.width: space.targeted || space.peeked ? 2 : 1
-            border.color: space.targeted ? "#F2EFE7"
-                        : space.peeked ? Qt.rgba(1, 1, 1, 0.5)
-                        : Qt.rgba(1, 1, 1, 0.14)
+            border.width: 2
+            border.color: Color.accent
+            Behavior on x { enabled: !overlay.moving; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
           }
+        }
 
-          Text {
-            // Window titles are somebody else's string: a browser tab can put
-            // anything in one. Rendered literally, never interpreted as markup.
-            textFormat: Text.PlainText
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.bottom
-            anchors.topMargin: 6
-            text: space.modelData.name
-            color: space.focused ? "#F2EFE7" : "#8D8880"
+        // ------------------------------------------------------- column labels
+        Repeater {
+          model: surface.columnLabels
+
+          delegate: Text {
+            required property var modelData
+            x: modelData.x
+            y: surface.stripHeight + surface.padding
+            width: modelData.width
+            horizontalAlignment: Text.AlignHCenter
+            text: modelData.key
+            color: Qt.rgba(1, 1, 1, 0.45)
+            opacity: overlay.veil
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
-            font.weight: space.focused ? Font.DemiBold : Font.Normal
-          }
-
-          HoverHandler {
-            enabled: overlay.active && !overlay.everything
-            cursorShape: Qt.PointingHandCursor
-            onHoveredChanged: overlay.hoverWorkspace(space.modelData.id, hovered)
-          }
-
-          TapHandler {
-            enabled: overlay.active
-            onTapped: overlay.goToWorkspace(space.modelData.id)
+            font.weight: Font.DemiBold
           }
         }
       }
 
-      // Where you are, as one ring that slides along the strip with your
-      // fingers rather than jumping from tile to tile when you let go.
-      Rectangle {
-        visible: overlay.stageIndex >= 0
-        x: surface.tileX(Math.max(0, overlay.stageIndex + overlay.slide))
-        y: surface.tileTop
-        width: surface.tileWidth
-        height: surface.tileHeight
-        radius: 8
-        color: "transparent"
-        border.width: 2
-        border.color: Color.accent
-        Behavior on x { enabled: !overlay.moving; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+      Item {
+        id: tiledLayer
+        anchors.fill: parent
       }
     }
 
-    // ------------------------------------------------------- column labels
-    Repeater {
-      model: surface.columnLabels
-
-      delegate: Text {
-        required property var modelData
-        x: modelData.x
-        y: surface.stripHeight + surface.padding
-        width: modelData.width
-        horizontalAlignment: Text.AlignHCenter
-        text: modelData.key
-        color: Qt.rgba(1, 1, 1, 0.45)
-        opacity: overlay.veil
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        font.weight: Font.DemiBold
-      }
+    Item {
+      id: floatLayer
+      anchors.fill: parent
     }
 
     // ------------------------------------------------------------ the windows
@@ -567,6 +585,10 @@ PanelWindow {
         // snapshot the card was built from.
         readonly property var real: overlay.geo[card.modelData.key] || card.modelData
         readonly property bool focusedWindow: card.real.active === true
+        readonly property bool floating: card.real.floating === true
+        // Floating over tiled, the way Hyprland stacks them, so a floating
+        // card can blur the tiled ones beneath it.
+        parent: card.floating ? floatLayer : tiledLayer
         // Shown, but nothing captured to show yet.
         readonly property bool waiting: card.shown && !shot.hasContent
         readonly property var slot: surface.slots[card.modelData.key] || null
@@ -661,6 +683,65 @@ PanelWindow {
           visible: overlay.deco.border > 0 && opacity > 0.01 && !card.dragging
         }
 
+        // What the compositor would have blurred behind this window, from
+        // wherever the card now is: a live copy of just what is behind the
+        // card — the desktop and strip, and for a floating window the tiled
+        // cards too — a little larger than it, so the blur has something to
+        // draw in from at the edges, blurred here and cut to the card's shape.
+        //
+        // Outside the frame, not in it: the frame draws its contents through
+        // a copy of its own, and a live copy nested in that never updates.
+        // It also has to be on screen to update at all, so it is, invisibly.
+        readonly property bool frostedGlass: surface.glass && overlay.wallpaper !== "" && shot.hasContent
+
+        ShaderEffectSource {
+          id: behind
+          x: -surface.frostPad
+          y: -surface.frostPad
+          width: card.width + 2 * surface.frostPad
+          height: card.height + 2 * surface.frostPad
+          opacity: 0
+          visible: card.frostedGlass
+          sourceItem: card.floating ? lower : base
+          sourceRect: Qt.rect(card.x - surface.frostPad, card.y - surface.frostPad,
+                              Math.max(1, card.width) + 2 * surface.frostPad,
+                              Math.max(1, card.height) + 2 * surface.frostPad)
+          live: true
+          recursive: false
+        }
+
+        Item {
+          id: frostShape
+          width: behind.width
+          height: behind.height
+          visible: false
+          layer.enabled: true
+
+          Rectangle {
+            x: surface.frostPad
+            y: surface.frostPad
+            width: card.width
+            height: card.height
+            radius: card.radius
+          }
+        }
+
+        MultiEffect {
+          x: behind.x
+          y: behind.y
+          width: behind.width
+          height: behind.height
+          visible: card.frostedGlass
+          source: behind
+          blurEnabled: true
+          blur: 1
+          blurMax: surface.frostRadius
+          autoPaddingEnabled: false
+          maskEnabled: true
+          maskSource: frostShape
+          opacity: frame.opacity
+        }
+
         ClippingRectangle {
           id: frame
           anchors.fill: parent
@@ -672,17 +753,8 @@ PanelWindow {
           // comes in. At the start of a swipe the card sits exactly on its
           // real window, which is still showing, so an empty card should let
           // that window through rather than flash a dark block over it.
-          color: shot.hasContent ? "#101014" : Qt.rgba(0.063, 0.063, 0.078, overlay.veil)
-
-          // What the compositor would have blurred behind this window, from
-          // wherever the card now is.
-          ShaderEffectSource {
-            anchors.fill: parent
-            visible: surface.glass && overlay.wallpaper !== "" && shot.hasContent
-            sourceItem: frost
-            sourceRect: Qt.rect(card.x, card.y, Math.max(1, card.width), Math.max(1, card.height))
-            recursive: false
-          }
+          color: card.frostedGlass ? "transparent"
+               : shot.hasContent ? "#101014" : Qt.rgba(0.063, 0.063, 0.078, overlay.veil)
 
           ScreencopyView {
             id: shot
