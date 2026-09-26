@@ -268,15 +268,31 @@ Scope {
     if (a.length !== b.length) return false
     for (let i = 0; i < a.length; i++) {
       const x = a[i], y = b[i]
-      if (x.key !== y.key || x.workspace !== y.workspace || x.monitor !== y.monitor || x.floating !== y.floating)
+      if (x.key !== y.key || root.wsOf(x) !== y.workspace || x.monitor !== y.monitor || x.floating !== y.floating)
         return false
     }
     return true
   }
 
+  // Windows sent to another desktop from here, by address: the desktop they
+  // went to. Replacing the snapshot to say so would rebuild every card, and a
+  // rebuilt card is a blank one until its capture comes back — every window
+  // on screen flashing because one of them moved. So the move is written down
+  // here instead, and everything asks `wsOf` where a window is.
+  property var moved: ({})
+
+  /** The desktop a window is on, as far as the overview is concerned. */
+  function wsOf(win) {
+    const to = root.moved[win.key]
+    return to !== undefined ? to : win.workspace
+  }
+
   function sync() {
     const next = root.liveShot
-    if (!root.sameWindows(root.shot, next)) root.shot = next
+    if (!root.sameWindows(root.shot, next)) {
+      root.shot = next
+      root.moved = ({})
+    }
     // And a fresh frame of each, now: the one they kept is from last time.
     root.beat++
     root.workspaces = root.liveWorkspaces
@@ -637,8 +653,8 @@ Scope {
         root.stageId = next
         // The selection moves to the desktop you are looking at, so enter
         // goes somewhere on it.
-        const active = root.shot.find(w => w.workspace === next && w.active)
-                    || root.shot.find(w => w.workspace === next)
+        const active = root.shot.find(w => root.wsOf(w) === next && w.active)
+                    || root.shot.find(w => root.wsOf(w) === next)
         root.selectedKey = active ? active.key : ""
       }
     }
@@ -716,6 +732,10 @@ Scope {
     if (space > 0 && space !== here) {
       Hyprland.dispatch('hl.dsp.window.move({ window = "address:0x' + address
                         + '", workspace = "' + space + '" })')
+      // Gone from this desktop now, not when the compositor has said so.
+      const next = Object.assign({}, root.moved)
+      next[address] = space
+      root.moved = next
     } else if (onto && onto !== address) {
       // Dropped on another window: they trade places in the tiling layout.
       Hyprland.dispatch('hl.dsp.window.swap({ window = "address:0x' + address

@@ -187,7 +187,7 @@ PanelWindow {
     if (overlay.everything || surface.searching) return surface.monitorWindows
     const out = []
     for (const win of surface.monitorWindows) {
-      if (win.workspace !== surface.shownWorkspace) continue
+      if (overlay.wsOf(win) !== surface.shownWorkspace) continue
       out.push(win)
     }
     return out
@@ -288,7 +288,7 @@ PanelWindow {
       // pointing at, which cancels the peek, which sends the card back — and
       // round it goes. It also means this no longer depends on which desktop
       // is shown, so hovering the strip recomputes no layout at all.
-      for (const group of Layout.groupBy(surface.matching, w => w.workspace)) {
+      for (const group of Layout.groupBy(surface.matching, w => overlay.wsOf(w))) {
         for (const slot of Layout.spread(group.windows, area, options)) {
           byKey[slot.key] = {
             x: slot.x + surface.padding,
@@ -303,7 +303,7 @@ PanelWindow {
 
     // Every window on this screen, kept in its workspace's own column so the
     // answer to "where is it" is still "on that desktop".
-    const groups = Layout.groupBy(surface.shownWindows, w => w.workspace)
+    const groups = Layout.groupBy(surface.shownWindows, w => overlay.wsOf(w))
     for (const column of Layout.columns(groups, area, options)) {
       for (const slot of column.slots) {
         byKey[slot.key] = {
@@ -323,7 +323,7 @@ PanelWindow {
       width: surface.width - surface.padding * 2,
       height: surface.height - surface.stripHeight - surface.padding * 2,
     }
-    const groups = Layout.groupBy(surface.shownWindows, w => w.workspace)
+    const groups = Layout.groupBy(surface.shownWindows, w => overlay.wsOf(w))
     return Layout.columns(groups, area, { gap: 26, rowGap: 62, maxScale: 0.78 }).map(column => ({
       key: column.key,
       x: column.x + surface.padding,
@@ -716,9 +716,9 @@ PanelWindow {
         // anything: the card is already here, it just fades in.
         readonly property bool here: overlay.everything || surface.searching
                                      || (surface.sliding ? Math.abs(card.lane) < 1
-                                                         : card.modelData.workspace === surface.shownWorkspace)
+                                                         : overlay.wsOf(card.modelData) === surface.shownWorkspace)
         // How many screens over this card's desktop is while sliding.
-        readonly property real lane: surface.leading ? overlay.laneOf(card.modelData.workspace) : 0
+        readonly property real lane: surface.leading ? overlay.laneOf(overlay.wsOf(card.modelData)) : 0
         readonly property real shift: surface.sliding ? card.lane * surface.width : 0
         readonly property bool shown: card.here && overlay.matches(card.modelData)
         readonly property bool hovered: hover.hovered && overlay.active
@@ -755,16 +755,27 @@ PanelWindow {
         readonly property real baseW: card.slot ? card.ownW + (card.slot.w - card.ownW) * card.along : card.ownW
         readonly property real baseH: card.slot ? card.ownH + (card.slot.h - card.ownH) * card.along : card.ownH
 
-        x: surface.snap((card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
+        // Dropped on another desktop: it stays where it was let go, the size it
+        // was over the tile, and fades — rather than flying back to the slot it
+        // no longer has while the spread closes up around the gap.
+        property bool leftAway: false
+        property rect leftAt: Qt.rect(0, 0, 0, 0)
+        property rect lastDrag: Qt.rect(0, 0, 0, 0)
+        Connections {
+          target: overlay
+          function onOpenedChanged() { if (!overlay.opened) card.leftAway = false }
+        }
+
+        x: card.leftAway ? card.leftAt.x : surface.snap((card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
            + card.baseW * (1 - card.squeeze) / 2
            + card.shift
            + (card.dragging ? dragger.activeTranslation.x : 0))
-        y: surface.snap((card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
+        y: card.leftAway ? card.leftAt.y : surface.snap((card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
            + card.baseH * (1 - card.squeeze) / 2
            - card.beyond * surface.height * 0.12
            + (card.dragging ? dragger.activeTranslation.y : 0))
-        width: surface.snap(card.baseW * card.squeeze)
-        height: surface.snap(card.baseH * card.squeeze)
+        width: card.leftAway ? card.leftAt.width : surface.snap(card.baseW * card.squeeze)
+        height: card.leftAway ? card.leftAt.height : surface.snap(card.baseH * card.squeeze)
 
         Behavior on x { enabled: overlay.active && !card.dragging && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on y { enabled: overlay.active && !card.dragging && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
@@ -778,7 +789,8 @@ PanelWindow {
         // Grown under the pointer only once the overview is open. The window
         // you were using starts out selected, and growing it from the first
         // frame made it the one card that did not match its window.
-        scale: card.dragging ? (overlay.dragTarget > 0 || overlay.dropOnKey !== "" ? 0.4 : 0.82)
+        scale: card.leftAway ? 0.4
+             : card.dragging ? (overlay.dragTarget > 0 || overlay.dropOnKey !== "" ? 0.4 : 0.82)
              : (card.picked && overlay.active ? 1.035 : 1)
         opacity: card.shown ? (card.dragging ? 0.94 : 1) : 0
         visible: card.opacity > 0.01
@@ -970,6 +982,11 @@ PanelWindow {
               overlay.dragKey = card.modelData.key
               overlay.selectedKey = card.modelData.key
             } else {
+              const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+              if (overlay.dragTarget > 0 && overlay.dragTarget !== here) {
+                card.leftAt = card.lastDrag
+                card.leftAway = true
+              }
               overlay.drop(card.modelData.key)
               overlay.dragKey = ""
             }
@@ -977,6 +994,7 @@ PanelWindow {
 
           onCentroidChanged: {
             if (!dragger.active) return
+            card.lastDrag = Qt.rect(card.x, card.y, card.width, card.height)
             const at = dragger.centroid.scenePosition
             overlay.aimDrag(surface.workspaceAtPoint(at.x, at.y), surface.cardAtPoint(at.x, at.y))
           }
@@ -1047,7 +1065,7 @@ PanelWindow {
             Rectangle {
               anchors.verticalCenter: parent.verticalCenter
               visible: surface.searching
-                       && card.modelData.workspace !== surface.shownWorkspace
+                       && overlay.wsOf(card.modelData) !== surface.shownWorkspace
               implicitWidth: elsewhere.implicitWidth + 12
               implicitHeight: elsewhere.implicitHeight + 4
               radius: 4
@@ -1057,7 +1075,7 @@ PanelWindow {
                 id: elsewhere
                 anchors.centerIn: parent
                 textFormat: Text.PlainText
-                text: card.modelData.workspace
+                text: overlay.wsOf(card.modelData)
                 color: "#F7F4EC"
                 font.family: Style.font.family
                 font.pixelSize: Math.round(Style.font.caption * 0.9)
@@ -1095,7 +1113,7 @@ PanelWindow {
         textFormat: Text.PlainText
         visible: overlay.active && !overlay.everything && !surface.searching && overlay.peek <= 0
                  && Math.abs(nothing.lane) < 1
-                 && !surface.monitorWindows.some(w => w.workspace === nothing.modelData)
+                 && !surface.monitorWindows.some(w => overlay.wsOf(w) === nothing.modelData)
         x: (surface.width - nothing.width) / 2 + nothing.lane * surface.width
         y: surface.stripHeight + (surface.height - surface.stripHeight - nothing.height) / 2
         text: "No windows on " + nothing.modelData
