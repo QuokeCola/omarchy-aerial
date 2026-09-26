@@ -790,7 +790,7 @@ PanelWindow {
         property real fly: 0
         property bool released: false
         readonly property bool flying: card.leftAway && !card.here && surface.leading
-        readonly property rect flyTo: card.flying
+        readonly property rect flyTo: card.leftAway
           ? surface.landingRect(card.modelData.key, overlay.wsOf(card.modelData), card.real)
           : Qt.rect(0, 0, 0, 0)
 
@@ -822,9 +822,27 @@ PanelWindow {
 
         onFlyingChanged: {
           overlay.setFlown(card.modelData.key, card.flying)
+          if (!card.flying && card.leftAway) {
+            // Where it was in the tile, from the flight itself: by now the
+            // card's own position may already have moved on.
+            card.backFrom = Qt.rect(card.blend(card.flyFrom.x, card.flyTo.x, card.fly),
+                                    card.blend(card.flyFrom.y, card.flyTo.y, card.fly),
+                                    card.blend(card.flyFrom.width, card.flyTo.width, card.fly),
+                                    card.blend(card.flyFrom.height, card.flyTo.height, card.fly))
+            card.back = 0
+            comingBack.restart()
+          }
           // Back into the tile after a peek: from wherever the card is now.
           if (card.flying && !card.released) {
-            card.flyFrom = Qt.rect(card.x, card.y, card.width, card.height)
+            // From where it stood in the spread, worked out rather than read
+            // back, for the same reason.
+            const k = card.back
+            card.flyFrom = Qt.rect(k < 1 ? card.blend(card.backFrom.x, card.homeX, k) : card.homeX,
+                                   k < 1 ? card.blend(card.backFrom.y, card.homeY, k) : card.homeY,
+                                   k < 1 ? card.blend(card.backFrom.width, card.homeW, k) : card.homeW,
+                                   k < 1 ? card.blend(card.backFrom.height, card.homeH, k) : card.homeH)
+            comingBack.stop()
+            card.back = 1
             card.fly = 0
             flight.restart()
           }
@@ -840,23 +858,46 @@ PanelWindow {
           }
         }
 
-        x: card.flying ? card.flyFrom.x + (card.flyTo.x - card.flyFrom.x) * card.fly : surface.snap((card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
+        readonly property real homeX: surface.snap((card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
            + card.baseW * (1 - card.squeeze) / 2
            + card.shift
            + (card.dragging ? dragger.activeTranslation.x : 0))
-        y: card.flying ? card.flyFrom.y + (card.flyTo.y - card.flyFrom.y) * card.fly : surface.snap((card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
+        readonly property real homeY: surface.snap((card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
            + card.baseH * (1 - card.squeeze) / 2
            - card.beyond * surface.height * 0.12
            + (card.dragging ? dragger.activeTranslation.y : 0))
-        width: card.flying ? card.flyFrom.width + (card.flyTo.width - card.flyFrom.width) * card.fly
-                           : surface.snap(card.baseW * card.squeeze)
-        height: card.flying ? card.flyFrom.height + (card.flyTo.height - card.flyFrom.height) * card.fly
-                            : surface.snap(card.baseH * card.squeeze)
+        readonly property real homeW: surface.snap(card.baseW * card.squeeze)
+        readonly property real homeH: surface.snap(card.baseH * card.squeeze)
 
-        Behavior on x { enabled: overlay.active && !card.dragging && !card.flying && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        Behavior on y { enabled: overlay.active && !card.dragging && !card.flying && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        Behavior on width { enabled: overlay.active && !card.dragging && !card.flying && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        Behavior on height { enabled: overlay.active && !card.dragging && !card.flying && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        // Out of a tile again — its desktop is being peeked at, or gone to —
+        // the card glides from the tile to where it belongs, rather than
+        // appearing there.
+        property rect backFrom: Qt.rect(0, 0, 0, 0)
+        property real back: 1
+        NumberAnimation {
+          id: comingBack
+          target: card
+          property: "back"
+          from: 0
+          to: 1
+          duration: 300
+          easing.type: Easing.OutCubic
+        }
+        function blend(from, to, k) { return from + (to - from) * k }
+
+        x: card.flying ? card.blend(card.flyFrom.x, card.flyTo.x, card.fly)
+           : (card.back < 1 ? card.blend(card.backFrom.x, card.homeX, card.back) : card.homeX)
+        y: card.flying ? card.blend(card.flyFrom.y, card.flyTo.y, card.fly)
+           : (card.back < 1 ? card.blend(card.backFrom.y, card.homeY, card.back) : card.homeY)
+        width: card.flying ? card.blend(card.flyFrom.width, card.flyTo.width, card.fly)
+               : (card.back < 1 ? card.blend(card.backFrom.width, card.homeW, card.back) : card.homeW)
+        height: card.flying ? card.blend(card.flyFrom.height, card.flyTo.height, card.fly)
+                : (card.back < 1 ? card.blend(card.backFrom.height, card.homeH, card.back) : card.homeH)
+
+        Behavior on x { enabled: overlay.active && !card.dragging && !card.flying && card.back >= 1 && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        Behavior on y { enabled: overlay.active && !card.dragging && !card.flying && card.back >= 1 && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        Behavior on width { enabled: overlay.active && !card.dragging && !card.flying && card.back >= 1 && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        Behavior on height { enabled: overlay.active && !card.dragging && !card.flying && card.back >= 1 && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
         z: card.dragging || card.flying ? 3 : (card.picked ? 2 : 1)
         // Held, it shrinks the way a thing you have picked up does — and

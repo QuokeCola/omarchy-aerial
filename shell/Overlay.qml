@@ -738,13 +738,22 @@ Scope {
 
   function dismiss() { if (root.service) root.service.hide() }
 
+  // Going somewhere from the overview makes that desktop the one the overview
+  // is showing before it closes, so it closes onto what the screen will
+  // actually show: that desktop's windows fly home, not the ones of the
+  // desktop it was opened on.
   function focusWindow(address) {
     if (!address) return
+    const win = root.shot.find(w => w.key === address)
+    if (win) root.stageId = root.wsOf(win)
+    root.peek = -1
     Hyprland.dispatch('hl.dsp.focus({ window = "address:0x' + address + '" })')
     root.dismiss()
   }
 
   function goToWorkspace(id) {
+    root.stageId = id
+    root.peek = -1
     Hyprland.dispatch('hl.dsp.focus({ workspace = "' + id + '" })')
     root.dismiss()
   }
