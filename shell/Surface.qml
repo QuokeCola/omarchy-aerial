@@ -64,15 +64,33 @@ PanelWindow {
   // best with no correction at all.
   readonly property real blurScale: 1
 
-  // A floating window's card is on screen, so the blur behind floating
-  // windows — which includes the tiled ones — has to run.
-  readonly property bool floatingShown: {
-    if (!surface.glass) return false
+  // The floating windows' cards on screen, bottom to top, in the order
+  // Hyprland draws them (see `zOrder`).
+  readonly property var floatStack: {
+    const out = []
     for (let i = 0; i < floatCards.count; i++) {
       const card = floatCards.itemAt(i)
-      if (card && card.shown) return true
+      if (!card || !card.shown) continue
+      const z = overlay.zOrder[card.modelData.key]
+      out.push({ key: card.modelData.key, z: typeof z === "number" ? z : -1 })
     }
-    return false
+    out.sort((a, b) => a.z - b.z)
+    return out.map(e => e.key)
+  }
+
+  function floatCardFor(key) {
+    for (let i = 0; i < floatCards.count; i++) {
+      const card = floatCards.itemAt(i)
+      if (card && card.modelData.key === key) return card
+    }
+    return null
+  }
+
+  /** The blur behind a floating window: its level's. */
+  function floatBlurFor(key) {
+    const at = surface.floatStack.indexOf(key)
+    const level = at >= 0 ? floatLevels.itemAt(at) : null
+    return level ? level.output : baseBlur.output
   }
 
   // The part of the screen windows live in: all of it, less what the bar and
@@ -694,21 +712,75 @@ PanelWindow {
       vibrancyDarkness: overlay.deco.blurVibrancyDarkness
     }
 
-    // Behind a floating window: all of that and the tiled windows too. Only
-    // run while a floating window is on screen.
-    HyprBlur {
-      id: floatBlur
-      anchors.fill: parent
-      sourceItem: lower
-      live: surface.glass && overlay.opened && surface.floatingShown
-      pixelSize: baseBlur.pixelSize
-      size: baseBlur.size
-      passes: baseBlur.passes
-      noise: baseBlur.noise
-      contrast: baseBlur.contrast
-      brightness: baseBlur.brightness
-      vibrancy: baseBlur.vibrancy
-      vibrancyDarkness: baseBlur.vibrancyDarkness
+    // Behind each floating window: everything below it — the desktop, the
+    // tiled windows, and the floating windows under it — the way Hyprland
+    // blurs a see-through window with xray off. One level per floating window
+    // on screen, bottom to top: each level's blur reads the level below's
+    // `stack`, which is that level's picture plus its own window, drawn as the
+    // card is. Nothing runs when no floating window is on screen.
+    Repeater {
+      id: floatLevels
+      model: surface.glass ? surface.floatStack : []
+
+      delegate: Item {
+        id: level
+        required property string modelData
+        required property int index
+        anchors.fill: parent
+
+        readonly property Item below: {
+          if (level.index === 0) return lower
+          const under = floatLevels.itemAt(level.index - 1)
+          return under ? under.stack : lower
+        }
+        readonly property Item cardItem: surface.floatCardFor(level.modelData)
+        readonly property Item output: levelBlur.output
+        readonly property alias stack: stack
+
+        // What the next window up has behind it: this level's picture, and
+        // this window over it — border and shadow too, hence the margin.
+        Item {
+          id: stack
+          width: surface.width
+          height: surface.height
+          visible: false
+
+          ShaderEffectSource {
+            anchors.fill: parent
+            sourceItem: level.below
+            live: true
+          }
+
+          ShaderEffectSource {
+            readonly property real margin: 24
+            visible: level.cardItem !== null
+            sourceItem: level.cardItem
+            x: level.cardItem ? level.cardItem.x - margin : 0
+            y: level.cardItem ? level.cardItem.y - margin : 0
+            width: level.cardItem ? level.cardItem.width + 2 * margin : 0
+            height: level.cardItem ? level.cardItem.height + 2 * margin : 0
+            sourceRect: level.cardItem ? Qt.rect(-margin, -margin, level.cardItem.width + 2 * margin,
+                                                 level.cardItem.height + 2 * margin) : Qt.rect(0, 0, 0, 0)
+            opacity: level.cardItem ? level.cardItem.opacity : 0
+            live: true
+          }
+        }
+
+        HyprBlur {
+          id: levelBlur
+          anchors.fill: parent
+          sourceItem: level.below
+          live: surface.glass && overlay.opened
+          pixelSize: baseBlur.pixelSize
+          size: baseBlur.size
+          passes: baseBlur.passes
+          noise: baseBlur.noise
+          contrast: baseBlur.contrast
+          brightness: baseBlur.brightness
+          vibrancy: baseBlur.vibrancy
+          vibrancyDarkness: baseBlur.vibrancyDarkness
+        }
+      }
     }
 
     // ------------------------------------------------------------ the windows
@@ -899,7 +971,9 @@ PanelWindow {
         Behavior on width { enabled: overlay.active && !card.dragging && !card.flying && card.back >= 1 && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on height { enabled: overlay.active && !card.dragging && !card.flying && card.back >= 1 && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
-        z: card.dragging || card.flying ? 3 : (card.picked ? 2 : 1)
+        // Floating cards stack as their windows do; see `floatStack`.
+        z: card.dragging || card.flying ? 100
+           : (card.floating ? 1 + surface.floatStack.indexOf(card.modelData.key) : (card.picked ? 2 : 1))
         // Held, it shrinks the way a thing you have picked up does — and
         // shrinks further over somewhere it would land, so it stops covering
         // what it is about to drop into.
@@ -988,7 +1062,7 @@ PanelWindow {
           anchors.fill: parent
           visible: card.frostedGlass
           opacity: frame.opacity
-          property var source: card.floating ? floatBlur.output : baseBlur.output
+          property var source: card.floating ? surface.floatBlurFor(card.modelData.key) : baseBlur.output
           // Where the card is on screen, scaled about its middle as it is
           // drawn, as a fraction of the screen.
           property vector4d area: {

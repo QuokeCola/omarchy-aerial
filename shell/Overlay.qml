@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.Io
 import "../app/Layout.js" as Layout
 
 // The overview: every window, live, spread out — one surface per screen.
@@ -185,6 +186,7 @@ Scope {
         floating: (top.lastIpcObject || {}).floating === true,
         title: top.title || "",
         opacity: tagged ? (active ? 0.985 : 0.96) : 1,
+        focus: (top.lastIpcObject || {}).focusHistoryID,
       }
     }
     return out
@@ -303,7 +305,27 @@ Scope {
     return to !== undefined ? to : win.workspace
   }
 
+  // How Hyprland stacks windows, by address: 0 at the bottom. Focus does not
+  // raise a floating window in Hyprland, so the focus history is not the
+  // stacking order; the order `hyprctl clients` lists them in is — it is the
+  // order they are drawn in. Asked for each time the overview opens.
+  property var zOrder: ({})
+  Process {
+    id: stackQuery
+    command: ["/usr/bin/hyprctl", "clients", "-j"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          const out = ({})
+          JSON.parse(text).forEach((c, i) => { out[String(c.address).replace(/^0x/, "")] = i })
+          root.zOrder = out
+        } catch (e) {}
+      }
+    }
+  }
+
   function sync() {
+    if (!stackQuery.running) stackQuery.running = true
     const next = root.liveShot
     if (!root.sameWindows(root.shot, next)) {
       root.shot = next
