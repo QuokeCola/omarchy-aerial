@@ -247,9 +247,21 @@ Scope {
         h: rect.h / height,
         appId: rect.appId,
         active: root.isActive(top),
+        key: top.address,
       })
     }
     return out
+  }
+
+  // Windows whose card has flown into a workspace tile and stands in the tile
+  // as a live miniature, by address: the tile does not also draw its block.
+  property var flown: ({})
+  function setFlown(key, on) {
+    if ((root.flown[key] === true) === on) return
+    const next = Object.assign({}, root.flown)
+    if (on) next[key] = true
+    else delete next[key]
+    root.flown = next
   }
 
   // What the overview is drawing: the snapshot, never the live models.
@@ -323,6 +335,7 @@ Scope {
     root.peek = -1
     root.peekWanted = -1
     root.noPeekId = -1
+    root.flown = ({})
     slider.stop()
     slider.value = 0
     slider.velocity = 0
@@ -760,6 +773,8 @@ Scope {
       Hyprland.dispatch('hl.dsp.window.move({ window = "address:0x' + address
                         + '", workspace = "' + space + '", follow = false })')
       root.noPeekId = space
+      // Nothing left selected on this desktop that has gone to another.
+      if (root.selectedKey === address) root.selectedKey = ""
       // Gone from this desktop now, not when the compositor has said so.
       const next = Object.assign({}, root.moved)
       next[address] = space
