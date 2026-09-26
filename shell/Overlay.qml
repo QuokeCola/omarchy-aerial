@@ -266,9 +266,13 @@ Scope {
   // each window is, and what it is called, come from the live model anyway.
   function sameWindows(a, b) {
     if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i++) {
-      const x = a[i], y = b[i]
-      if (x.key !== y.key || root.wsOf(x) !== y.workspace || x.monitor !== y.monitor || x.floating !== y.floating)
+    // By address, not position: the compositor's list can come back in
+    // another order with nothing else changed.
+    const byKey = ({})
+    for (const y of b) byKey[y.key] = y
+    for (const x of a) {
+      const y = byKey[x.key]
+      if (!y || root.wsOf(x) !== y.workspace || x.monitor !== y.monitor || x.floating !== y.floating)
         return false
     }
     return true
@@ -730,8 +734,12 @@ Scope {
 
     const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
     if (space > 0 && space !== here) {
+      // Without following it: moving a window takes the screen to its new
+      // desktop by default, which switched the real desktop underneath the
+      // overview — flashing as it went, and handing back to the wrong desktop
+      // when the overview closed.
       Hyprland.dispatch('hl.dsp.window.move({ window = "address:0x' + address
-                        + '", workspace = "' + space + '" })')
+                        + '", workspace = "' + space + '", follow = false })')
       // Gone from this desktop now, not when the compositor has said so.
       const next = Object.assign({}, root.moved)
       next[address] = space
