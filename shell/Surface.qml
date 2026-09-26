@@ -227,6 +227,25 @@ PanelWindow {
 
   function tileX(index) { return surface.tileLeft + index * (surface.tileWidth + surface.tileGap) }
 
+  /** Where a window sits in a workspace's tile: its block in the tile, from
+      where Hyprland has actually put it — or, until Hyprland has said, the
+      middle of the tile at the window's shape. */
+  function landingRect(key, spaceId, real) {
+    const index = overlay.workspaces.findIndex(w => w.id === spaceId)
+    if (index < 0) return Qt.rect(surface.width / 2, surface.tileTop, 1, 1)
+    const tx = surface.tileX(index)
+    const ty = surface.tileTop
+    const tw = surface.tileWidth
+    const th = surface.tileHeight
+    const plan = (overlay.livePlans[spaceId] || []).find(p => p.key === key)
+    if (plan) return Qt.rect(tx + plan.x * tw, ty + plan.y * th, Math.max(3, plan.w * tw), Math.max(3, plan.h * th))
+    const aspect = real && real.h > 0 ? real.w / real.h : 1.5
+    let w = tw * 0.6
+    let h = w / aspect
+    if (h > th * 0.6) { h = th * 0.6; w = h * aspect }
+    return Qt.rect(tx + (tw - w) / 2, ty + (th - h) / 2, w, h)
+  }
+
   /** Which workspace is under this point, or -1. Generous by a few pixels: a
    *  drop that looks like it is on a tile should count as one. */
   function workspaceAtPoint(px, py) {
@@ -477,7 +496,9 @@ PanelWindow {
               readonly property bool focused: space.modelData.id === overlay.stageWorkspace
               readonly property bool targeted: overlay.dragTarget === space.modelData.id
               readonly property bool peeked: overlay.peek === space.modelData.id
-              readonly property var plan: overlay.plans[space.modelData.id] || []
+              // Live while open, so a window dropped here shows up where
+              // Hyprland actually puts it, and the others make room.
+              readonly property var plan: (overlay.opened ? overlay.livePlans : overlay.plans)[space.modelData.id] || []
 
               x: surface.tileX(space.index)
               y: surface.tileTop
@@ -517,6 +538,8 @@ PanelWindow {
 
                   delegate: Rectangle {
                     id: mini
+                    // Its card is standing here itself, live.
+                    visible: !overlay.flown[mini.modelData.key]
                     required property var modelData
                     x: mini.modelData.x * tile.width
                     y: mini.modelData.y * tile.height
@@ -755,52 +778,108 @@ PanelWindow {
         readonly property real baseW: card.slot ? card.ownW + (card.slot.w - card.ownW) * card.along : card.ownW
         readonly property real baseH: card.slot ? card.ownH + (card.slot.h - card.ownH) * card.along : card.ownH
 
-        // Dropped on another desktop: it stays where it was let go, the size it
-        // was over the tile, and fades — rather than flying back to the slot it
-        // no longer has while the spread closes up around the gap.
+        // Dropped on another desktop's tile, the way a Mac does it: the card
+        // flies from where it was let go into the tile, shrinking to exactly
+        // where the window now sits in that desktop, and stays there, a live
+        // miniature, while the spread closes up around the gap. The spot is
+        // read live, so as Hyprland lays that desktop out again the card
+        // follows. Peek at that desktop and it comes back out to its slot.
         property bool leftAway: false
-        property rect leftAt: Qt.rect(0, 0, 0, 0)
         property rect lastDrag: Qt.rect(0, 0, 0, 0)
-        Connections {
-          target: overlay
-          function onOpenedChanged() { if (!overlay.opened) card.leftAway = false }
+        property rect flyFrom: Qt.rect(0, 0, 0, 0)
+        property real fly: 0
+        property bool released: false
+        readonly property bool flying: card.leftAway && !card.here && surface.leading
+        readonly property rect flyTo: card.flying
+          ? surface.landingRect(card.modelData.key, overlay.wsOf(card.modelData), card.real)
+          : Qt.rect(0, 0, 0, 0)
+
+        NumberAnimation {
+          id: flight
+          target: card
+          property: "fly"
+          from: 0
+          to: 1
+          duration: 340
+          easing.type: Easing.OutCubic
         }
 
-        x: card.leftAway ? card.leftAt.x : surface.snap((card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
+        /** Let go over another desktop's tile. */
+        function flyAway() {
+          // From exactly what was on screen: the card as held, shrunk about
+          // its middle.
+          // Over a tile it is held at 0.4 (see `scale`); read the number, not
+          // the property, which may already have let go by now.
+          const held = 0.4
+          const r = card.lastDrag
+          card.flyFrom = Qt.rect(r.x + r.width * (1 - held) / 2, r.y + r.height * (1 - held) / 2,
+                                 r.width * held, r.height * held)
+          card.released = true
+          card.leftAway = true
+          card.fly = 0
+          flight.restart()
+        }
+
+        onFlyingChanged: {
+          overlay.setFlown(card.modelData.key, card.flying)
+          // Back into the tile after a peek: from wherever the card is now.
+          if (card.flying && !card.released) {
+            card.flyFrom = Qt.rect(card.x, card.y, card.width, card.height)
+            card.fly = 0
+            flight.restart()
+          }
+          card.released = false
+        }
+
+        Connections {
+          target: overlay
+          function onOpenedChanged() {
+            if (overlay.opened) return
+            flight.stop()
+            card.leftAway = false
+          }
+        }
+
+        x: card.flying ? card.flyFrom.x + (card.flyTo.x - card.flyFrom.x) * card.fly : surface.snap((card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
            + card.baseW * (1 - card.squeeze) / 2
            + card.shift
            + (card.dragging ? dragger.activeTranslation.x : 0))
-        y: card.leftAway ? card.leftAt.y : surface.snap((card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
+        y: card.flying ? card.flyFrom.y + (card.flyTo.y - card.flyFrom.y) * card.fly : surface.snap((card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
            + card.baseH * (1 - card.squeeze) / 2
            - card.beyond * surface.height * 0.12
            + (card.dragging ? dragger.activeTranslation.y : 0))
-        width: card.leftAway ? card.leftAt.width : surface.snap(card.baseW * card.squeeze)
-        height: card.leftAway ? card.leftAt.height : surface.snap(card.baseH * card.squeeze)
+        width: card.flying ? card.flyFrom.width + (card.flyTo.width - card.flyFrom.width) * card.fly
+                           : surface.snap(card.baseW * card.squeeze)
+        height: card.flying ? card.flyFrom.height + (card.flyTo.height - card.flyFrom.height) * card.fly
+                            : surface.snap(card.baseH * card.squeeze)
 
-        Behavior on x { enabled: overlay.active && !card.dragging && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        Behavior on y { enabled: overlay.active && !card.dragging && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        Behavior on width { enabled: overlay.active && !card.dragging && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        Behavior on height { enabled: overlay.active && !card.dragging && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        Behavior on x { enabled: overlay.active && !card.dragging && !card.flying && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        Behavior on y { enabled: overlay.active && !card.dragging && !card.flying && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        Behavior on width { enabled: overlay.active && !card.dragging && !card.flying && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        Behavior on height { enabled: overlay.active && !card.dragging && !card.flying && !overlay.moving && !overlay.settling; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
-        z: card.dragging ? 3 : (card.picked ? 2 : 1)
+        z: card.dragging || card.flying ? 3 : (card.picked ? 2 : 1)
         // Held, it shrinks the way a thing you have picked up does — and
         // shrinks further over somewhere it would land, so it stops covering
         // what it is about to drop into.
         // Grown under the pointer only once the overview is open. The window
         // you were using starts out selected, and growing it from the first
         // frame made it the one card that did not match its window.
-        scale: card.leftAway ? 0.4
+        scale: card.flying ? 1
              : card.dragging ? (overlay.dragTarget > 0 || overlay.dropOnKey !== "" ? 0.4 : 0.82)
              : (card.picked && overlay.active ? 1.035 : 1)
-        opacity: card.shown ? (card.dragging ? 0.94 : 1) : 0
+        opacity: card.flying ? overlay.veil : (card.shown ? (card.dragging ? 0.94 : 1) : 0)
         visible: card.opacity > 0.01
-        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        // Not as it takes off: the card swaps its shrink for its size in the
+        // same frame, and animating one of them would show the seam.
+        Behavior on scale { enabled: !card.flying; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
         // Sliding carries a desktop off the screen rather than fading it: one
         // that is still dissolving as it goes reads as lag.
         Behavior on opacity { enabled: !surface.sliding; NumberAnimation { duration: 150 } }
 
         // Hyprland's rounding on the desktop, the overview's own once spread.
-        readonly property real radius: overlay.deco.rounding + (14 - overlay.deco.rounding) * overlay.dress
+        readonly property real radius: card.flying ? 3 + (14 - 3) * (1 - card.fly)
+                                     : overlay.deco.rounding + (14 - overlay.deco.rounding) * overlay.dress
 
         // Hyprland's shadow and border, which the card wears while it still
         // stands in for the window, and sheds as it becomes a card. Drawn by
@@ -931,7 +1010,7 @@ PanelWindow {
             target: overlay
             // Only the cards you can actually see are worth a frame; the rest
             // are kept alive purely so that showing them is instant.
-            function onBeatChanged() { if (card.shown) shot.captureFrame() }
+            function onBeatChanged() { if (card.shown || card.flying) shot.captureFrame() }
           }
 
           // Coming into view does not wait for the next beat. Without this a
@@ -949,7 +1028,9 @@ PanelWindow {
           anchors.fill: parent
           radius: card.radius
           color: "transparent"
-          border.width: card.landing ? 3 : (card.picked ? 3 : 1)
+          // In a tile it is a miniature, not a card you can pick: the tile's
+          // own hairline is the only outline.
+          border.width: card.flying ? 0 : (card.landing ? 3 : (card.picked ? 3 : 1))
           border.color: card.landing ? "#F2EFE7" : (card.picked ? Color.accent : Qt.rgba(1, 1, 1, 0.14))
           opacity: overlay.dress
         }
@@ -983,10 +1064,7 @@ PanelWindow {
               overlay.selectedKey = card.modelData.key
             } else {
               const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
-              if (overlay.dragTarget > 0 && overlay.dragTarget !== here) {
-                card.leftAt = card.lastDrag
-                card.leftAway = true
-              }
+              if (overlay.dragTarget > 0 && overlay.dragTarget !== here) card.flyAway()
               overlay.drop(card.modelData.key)
               overlay.dragKey = ""
             }
@@ -1011,7 +1089,7 @@ PanelWindow {
           color: shut.hovered ? "#D2604F" : Qt.rgba(0, 0, 0, 0.62)
           border.width: 1
           border.color: Qt.rgba(1, 1, 1, 0.22)
-          visible: overlay.active && card.picked && !card.dragging
+          visible: overlay.active && card.picked && !card.dragging && !card.flying
           opacity: visible ? 1 : 0
           Behavior on opacity { NumberAnimation { duration: 110 } }
 
@@ -1044,7 +1122,7 @@ PanelWindow {
           height: caption.implicitHeight + 10
           radius: height / 2
           color: card.picked ? Qt.rgba(0, 0, 0, 0.78) : Qt.rgba(0, 0, 0, 0.5)
-          opacity: overlay.active ? 1 : 0
+          opacity: overlay.active && !card.flying ? 1 : 0
           Behavior on opacity { NumberAnimation { duration: 120 } }
 
           Row {
