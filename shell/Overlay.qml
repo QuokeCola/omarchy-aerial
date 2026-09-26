@@ -322,6 +322,7 @@ Scope {
     root.filter = ""
     root.peek = -1
     root.peekWanted = -1
+    root.noPeekId = -1
     slider.stop()
     slider.value = 0
     slider.velocity = 0
@@ -367,6 +368,14 @@ Scope {
   // about where things are.
   property var leadSurface: null
 
+  // Picking a window up ends any peek: it is carried over the desktop it
+  // came from.
+  onDragKeyChanged: if (root.dragKey !== "") {
+    peeking.stop()
+    root.peekWanted = -1
+    root.peek = -1
+  }
+
   function aimDrag(workspaceId, cardKey) {
     root.dragTarget = workspaceId
     // A workspace under the pointer wins: it is the larger, deliberate target.
@@ -374,12 +383,22 @@ Scope {
   }
 
   /** Hovering a workspace shows you what is on it, without going there. */
+  //
+  // Not while a window is being dragged, though: carrying one to a tile would
+  // swap the whole spread for that desktop under the pointer, the windows you
+  // are moving it away from vanishing mid-drag — and not over the tile one was
+  // just dropped on, until the pointer has left it, or the spread flips to
+  // that desktop the moment the window lands.
+  property int noPeekId: -1
+
   function hoverWorkspace(id, entered) {
     const here = root.stageWorkspace
     if (entered) {
-      if (id === here || root.moving) return
+      if (id === here || root.moving || root.dragKey !== "" || id === root.noPeekId) return
       root.peekWanted = id
       peeking.restart()
+    } else if (id === root.noPeekId) {
+      root.noPeekId = -1
     } else if (root.peekWanted === id) {
       peeking.stop()
       root.peekWanted = -1
@@ -740,6 +759,7 @@ Scope {
       // when the overview closed.
       Hyprland.dispatch('hl.dsp.window.move({ window = "address:0x' + address
                         + '", workspace = "' + space + '", follow = false })')
+      root.noPeekId = space
       // Gone from this desktop now, not when the compositor has said so.
       const next = Object.assign({}, root.moved)
       next[address] = space
