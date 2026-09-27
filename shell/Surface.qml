@@ -246,9 +246,11 @@ PanelWindow {
   function tileX(index) { return surface.tileLeft + index * (surface.tileWidth + surface.tileGap) }
 
   /** Where a window sits in a workspace's tile: its block in the tile, from
-      where Hyprland has actually put it — or, until Hyprland has said, the
-      middle of the tile at the window's shape. */
-  function landingRect(key, spaceId, real) {
+      where Hyprland has actually put it — or, until Hyprland has said, where
+      it will: a floating window keeps its place and size, a window going to
+      an empty desktop fills it, and otherwise the middle of the tile at the
+      window's shape. */
+  function landingRect(key, spaceId, real, floating) {
     const index = overlay.workspaces.findIndex(w => w.id === spaceId)
     if (index < 0) return Qt.rect(surface.width / 2, surface.tileTop, 1, 1)
     const tx = surface.tileX(index)
@@ -257,6 +259,18 @@ PanelWindow {
     const th = surface.tileHeight
     const plan = (overlay.livePlans[spaceId] || []).find(p => p.key === key)
     if (plan) return Qt.rect(tx + plan.x * tw, ty + plan.y * th, Math.max(3, plan.w * tw), Math.max(3, plan.h * th))
+    const sw = Math.max(1, surface.width)
+    const sh = Math.max(1, surface.height)
+    if (floating && real && real.w > 0)
+      return Qt.rect(tx + real.x / sw * tw, ty + real.y / sh * th, Math.max(3, real.w / sw * tw), Math.max(3, real.h / sh * th))
+    const others = (overlay.livePlans[spaceId] || []).filter(p => p.key !== key)
+    if (others.length === 0) {
+      // Alone there, it will fill the desktop: the work area, less the gaps
+      // Hyprland leaves around it.
+      const gap = 0.02
+      const top = surface.reserved[1] / sh
+      return Qt.rect(tx + tw * gap, ty + th * (top + gap), tw * (1 - 2 * gap), th * (1 - top - 2 * gap))
+    }
     const aspect = real && real.h > 0 ? real.w / real.h : 1.5
     let w = tw * 0.6
     let h = w / aspect
@@ -859,6 +873,17 @@ PanelWindow {
         property bool leftAway: false
         property rect lastDrag: Qt.rect(0, 0, 0, 0)
 
+        // Held over another desktop's tile, the card is already the size it
+        // will be there, so letting go only settles it into place — rather
+        // than landing a different size from the one carried over.
+        readonly property real tileScale: {
+          const target = overlay.dragTarget
+          const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+          if (!(target > 0) || target === here || card.width <= 0 || card.height <= 0) return 0.4
+          const r = surface.landingRect(card.modelData.key, target, card.real, card.floating)
+          return Math.max(0.05, Math.min(r.width / card.width, r.height / card.height))
+        }
+
         // Picked up, the card slides so its middle is under the pointer while
         // it shrinks — it shrinks about its middle, so held by a corner it
         // would otherwise shrink away from the pointer, further still over a
@@ -880,7 +905,7 @@ PanelWindow {
         property bool released: false
         readonly property bool flying: card.leftAway && !card.here && surface.leading
         readonly property rect flyTo: card.leftAway
-          ? surface.landingRect(card.modelData.key, overlay.wsOf(card.modelData), card.real)
+          ? surface.landingRect(card.modelData.key, overlay.wsOf(card.modelData), card.real, card.floating)
           : Qt.rect(0, 0, 0, 0)
 
         NumberAnimation {
@@ -897,9 +922,9 @@ PanelWindow {
         function flyAway() {
           // From exactly what was on screen: the card as held, shrunk about
           // its middle.
-          // Over a tile it is held at 0.4 (see `scale`); read the number, not
-          // the property, which may already have let go by now.
-          const held = 0.4
+          // Held at the size it will have in the tile (see `tileScale`); read
+          // that rather than `scale`, which may already have let go by now.
+          const held = card.tileScale
           const r = card.lastDrag
           card.flyFrom = Qt.rect(r.x + r.width * (1 - held) / 2, r.y + r.height * (1 - held) / 2,
                                  r.width * held, r.height * held)
@@ -998,7 +1023,7 @@ PanelWindow {
         // you were using starts out selected, and growing it from the first
         // frame made it the one card that did not match its window.
         scale: card.flying ? 1
-             : card.dragging ? (overlay.dragTarget > 0 || overlay.dropOnKey !== "" ? 0.4 : 0.82)
+             : card.dragging ? (overlay.dragTarget > 0 ? card.tileScale : (overlay.dropOnKey !== "" ? 0.4 : 0.82))
              : (card.picked && overlay.active ? 1.035 : 1)
         opacity: card.flying ? overlay.veil : (card.shown ? (card.dragging ? 0.94 : 1) : 0)
         visible: card.opacity > 0.01
