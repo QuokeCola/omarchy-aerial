@@ -1200,7 +1200,17 @@ PanelWindow {
               centeringOn.restart()
             } else {
               const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
-              if (overlay.dragTarget > 0 && overlay.dragTarget !== here) card.flyAway()
+              if (overlay.dragTarget > 0 && overlay.dragTarget !== here) {
+                card.flyAway()
+              } else {
+                // Back to its place — or to the other window's, if they are
+                // trading — from exactly where it was let go, rather than
+                // jumping: the eased Behaviors switch on in the same moment the
+                // drag ends, and which of the two Qt sees first is not given.
+                card.backFrom = card.lastDrag
+                card.back = 0
+                comingBack.restart()
+              }
               overlay.drop(card.modelData.key)
               overlay.dragKey = ""
             }
