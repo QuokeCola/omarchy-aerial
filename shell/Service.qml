@@ -147,8 +147,8 @@ Item {
 
   // How it lands once the fingers lift: back from a stretch, or the rest of
   // the way open or closed.
-  readonly property real landStiffness: 20
-  readonly property real landDamping: 0.9
+  readonly property real landStiffness: 56
+  readonly property real landDamping: 2.0
 
   // Fingers down or the spring still moving: `t` is changing every frame and
   // everything drawn from it must follow it exactly, not ease toward it.

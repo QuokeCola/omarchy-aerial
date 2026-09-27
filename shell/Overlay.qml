@@ -673,8 +673,8 @@ Scope {
     // it had — topped up by a flick faster than it had caught up to.
     root.slideGoal = to
     if (!slider.running) slider.value = root.slide
-    slider.stiffness = 18
-    slider.damping = 0.9
+    slider.stiffness = 52
+    slider.damping = 2.0
     slider.velocity = Math.max(-6, Math.min(6, velocity))
     // Running before the fingers are let go of, so the cards never see a
     // frame where neither is moving them.
