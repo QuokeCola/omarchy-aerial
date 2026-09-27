@@ -858,6 +858,23 @@ PanelWindow {
         // follows. Peek at that desktop and it comes back out to its slot.
         property bool leftAway: false
         property rect lastDrag: Qt.rect(0, 0, 0, 0)
+
+        // Picked up, the card slides so its middle is under the pointer while
+        // it shrinks — it shrinks about its middle, so held by a corner it
+        // would otherwise shrink away from the pointer, further still over a
+        // tile — and stays there however small it gets.
+        property real grabX: 0
+        property real grabY: 0
+        property real centering: 0
+        NumberAnimation {
+          id: centeringOn
+          target: card
+          property: "centering"
+          from: 0
+          to: 1
+          duration: 160
+          easing.type: Easing.OutCubic
+        }
         property rect flyFrom: Qt.rect(0, 0, 0, 0)
         property real fly: 0
         property bool released: false
@@ -933,11 +950,11 @@ PanelWindow {
         readonly property real homeX: surface.snap((card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
            + card.baseW * (1 - card.squeeze) / 2
            + card.shift
-           + (card.dragging ? dragger.activeTranslation.x : 0))
+           + (card.dragging ? dragger.activeTranslation.x + (card.grabX - card.homeW / 2) * card.centering : 0))
         readonly property real homeY: surface.snap((card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
            + card.baseH * (1 - card.squeeze) / 2
            - card.beyond * surface.height * 0.12
-           + (card.dragging ? dragger.activeTranslation.y : 0))
+           + (card.dragging ? dragger.activeTranslation.y + (card.grabY - card.homeH / 2) * card.centering : 0))
         readonly property real homeW: surface.snap(card.baseW * card.squeeze)
         readonly property real homeH: surface.snap(card.baseH * card.squeeze)
 
@@ -1177,6 +1194,10 @@ PanelWindow {
             if (dragger.active) {
               overlay.dragKey = card.modelData.key
               overlay.selectedKey = card.modelData.key
+              card.grabX = dragger.centroid.pressPosition.x
+              card.grabY = dragger.centroid.pressPosition.y
+              card.centering = 0
+              centeringOn.restart()
             } else {
               const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
               if (overlay.dragTarget > 0 && overlay.dragTarget !== here) card.flyAway()
