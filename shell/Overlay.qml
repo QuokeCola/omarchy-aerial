@@ -773,11 +773,76 @@ Scope {
     root.dismiss()
   }
 
-  function goToWorkspace(id) {
+  function goToWorkspace(id, monitorName) {
     root.stageId = id
     root.peek = -1
+    // A desktop that does not exist yet is made on whichever screen has
+    // focus: the one whose tile was clicked, then.
+    const exists = (Hyprland.workspaces.values || []).some(w => w.id === id)
+    if (!exists && monitorName) Hyprland.dispatch('hl.dsp.focus({ monitor = "' + monitorName + '" })')
     Hyprland.dispatch('hl.dsp.focus({ workspace = "' + id + '" })')
     root.dismiss()
+  }
+
+  // ------------------------------------------------------ the screen in use
+
+  /** The pointer has moved to another screen: that screen leads now — the
+      keyboard, the strip's peeking and dropping, sliding through its own
+      desktops — rather than leaving it a picture you can only look at. */
+  function leadTo(name) {
+    if (!name || !root.service || name === root.leadMonitor) return
+    if (root.moving || root.dragKey !== "" || !root.active) return
+    const mon = (Hyprland.monitors.values || []).find(m => m.name === name)
+    peeking.stop()
+    root.peek = -1
+    root.peekWanted = -1
+    root.noPeekId = -1
+    root.stageId = mon && mon.activeWorkspace ? mon.activeWorkspace.id : -1
+    root.service.monitorName = name
+  }
+
+  // Hyprland moves its focused monitor to whichever screen the pointer is
+  // on, so that is the one to follow.
+  Connections {
+    target: Hyprland
+    function onFocusedMonitorChanged() {
+      if (root.active && Hyprland.focusedMonitor) root.leadTo(Hyprland.focusedMonitor.name)
+    }
+  }
+
+  /** Pointing at a window focuses it, so the overview closes onto the window
+      you were last looking at — but only one on the desktop its screen is
+      showing: focusing a window elsewhere would switch that screen's desktop
+      underneath the overview. */
+  function hoverFocus(key) {
+    if (!root.active || root.dragKey !== "" || root.moving) return
+    const top = (Hyprland.toplevels.values || []).find(t => t.address === key)
+    if (!top || !top.workspace || !top.monitor) return
+    const showing = top.monitor.activeWorkspace
+    if (!showing || showing.id !== top.workspace.id || root.isActive(top)) return
+    root.focusQuietly(key)
+  }
+
+  // Focusing a window makes Hyprland warp the pointer to the middle of the
+  // real window — which, under the overview, is somewhere else entirely, and
+  // likely over another card. So pointer warps are switched off for exactly
+  // that one dispatch, and put back as they were, in one go.
+  property string focusWanted: ""
+  Process {
+    id: quietFocus
+    onRunningChanged: if (!running && root.focusWanted !== "") root.focusQuietly(root.focusWanted)
+  }
+  function focusQuietly(key) {
+    if (quietFocus.running) {
+      root.focusWanted = key
+      return
+    }
+    root.focusWanted = ""
+    quietFocus.command = ["/usr/bin/hyprctl", "eval",
+      "local w = hl.get_config('cursor.no_warps'); hl.config({ cursor = { no_warps = true } }); "
+      + "hl.dispatch(hl.dsp.focus({ window = 'address:0x" + key + "' })); "
+      + "hl.config({ cursor = { no_warps = w } })"]
+    quietFocus.running = true
   }
 
   function closeWindow(address) {
