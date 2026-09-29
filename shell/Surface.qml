@@ -172,6 +172,10 @@ PanelWindow {
     return surface.monitor && surface.monitor.activeWorkspace ? surface.monitor.activeWorkspace.id : -1
   }
 
+  // The desktop this screen's strip marks as current.
+  readonly property int ringWorkspace: surface.leading ? overlay.stageWorkspace
+    : (surface.monitor && surface.monitor.activeWorkspace ? surface.monitor.activeWorkspace.id : -1)
+
   // Sliding between workspaces moves every desktop's spread sideways together,
   // so this screen is a window onto a row of them.
   readonly property bool sliding: surface.leading && overlay.moving
@@ -228,7 +232,10 @@ PanelWindow {
   })
 
   // Room for the workspace strip along the top, the way Mission Control does.
-  readonly property real stripHeight: surface.leading ? Math.max(96, surface.height * 0.15) : 24
+  // On every screen — each is somewhere you might be working — and the same
+  // height on each, so the spread does not move when the pointer changes
+  // screens.
+  readonly property real stripHeight: Math.max(96, surface.height * 0.15)
   readonly property real padding: 32
 
   // The strip is laid out from these and hit-tested from these, so a dragged
@@ -281,7 +288,6 @@ PanelWindow {
   /** Which workspace is under this point, or -1. Generous by a few pixels: a
    *  drop that looks like it is on a tile should count as one. */
   function workspaceAtPoint(px, py) {
-    if (!surface.leading) return -1
     const slack = 10
     if (py < surface.tileTop - slack || py > surface.tileTop + surface.tileHeight + slack) return -1
     for (let i = 0; i < overlay.workspaces.length; i++) {
@@ -514,10 +520,9 @@ PanelWindow {
           height: surface.stripHeight
           y: -height * (1 - overlay.veil)
           opacity: overlay.veil
-          visible: surface.leading
 
           Repeater {
-            model: surface.leading ? overlay.workspaces : []
+            model: overlay.workspaces
 
             delegate: Item {
               id: space
@@ -525,7 +530,7 @@ PanelWindow {
               required property int index
               // The desktop the spread is showing, which sliding moves before the
               // compositor has caught up.
-              readonly property bool focused: space.modelData.id === overlay.stageWorkspace
+              readonly property bool focused: space.modelData.id === surface.ringWorkspace
               readonly property bool targeted: overlay.dragTarget === space.modelData.id
               readonly property bool peeked: overlay.peek === space.modelData.id
               // Live while open, so a window dropped here shows up where
@@ -646,16 +651,19 @@ PanelWindow {
 
               TapHandler {
                 enabled: overlay.active
-                onTapped: overlay.goToWorkspace(space.modelData.id)
+                onTapped: overlay.goToWorkspace(space.modelData.id, surface.monitorName)
               }
             }
           }
 
           // Where you are, as one ring that slides along the strip with your
-          // fingers rather than jumping from tile to tile when you let go.
+          // fingers rather than jumping from tile to tile when you let go. On
+          // a screen that is not leading, the desktop that screen shows.
           Rectangle {
-            visible: overlay.stageIndex >= 0
-            x: surface.tileX(Math.max(0, overlay.laneTile(overlay.stageIndex + overlay.slide)))
+            readonly property int tile: overlay.workspaces.findIndex(w => w.id === surface.ringWorkspace)
+            visible: surface.leading ? overlay.stageIndex >= 0 : tile >= 0
+            x: surface.leading ? surface.tileX(Math.max(0, overlay.laneTile(overlay.stageIndex + overlay.slide)))
+                               : surface.tileX(Math.max(0, tile))
             y: surface.tileTop
             width: surface.tileWidth
             height: surface.tileHeight
@@ -1196,7 +1204,10 @@ PanelWindow {
           id: hover
           enabled: overlay.active && card.shown
           cursorShape: card.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
-          onHoveredChanged: if (hover.hovered) overlay.selectedKey = card.modelData.key
+          onHoveredChanged: if (hover.hovered) {
+            overlay.selectedKey = card.modelData.key
+            overlay.hoverFocus(card.modelData.key)
+          }
         }
 
         TapHandler {
