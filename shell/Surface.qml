@@ -1204,9 +1204,16 @@ PanelWindow {
           id: hover
           enabled: overlay.active && card.shown
           cursorShape: card.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
-          onHoveredChanged: if (hover.hovered) {
-            overlay.selectedKey = card.modelData.key
-            overlay.hoverFocus(card.modelData.key)
+          onHoveredChanged: {
+            if (hover.hovered) {
+              overlay.selectedKey = card.modelData.key
+              overlay.hoverFocus(card.modelData.key)
+            } else if (overlay.selectedKey === card.modelData.key && !card.dragging && overlay.dragKey === "") {
+              // Off the window, onto nothing: nothing is picked. (Hyprland
+              // keeps its focus — it has no way to focus nothing — but the
+              // overview stops saying so.)
+              overlay.selectedKey = ""
+            }
           }
         }
 
