@@ -58,6 +58,11 @@ PanelWindow {
   // Live: redrawn whenever what it covers changes, which during a swipe is
   // every frame. A machine that struggles wants the `polish` branch.
   readonly property bool glass: overlay.deco.blur === true && overlay.frost
+
+  // Corners follow Hyprland's decoration:rounding: each shape keeps its own
+  // radius as a ceiling, so square-cornered setups (rounding 0) get square
+  // tiles and cards, and rounded ones look as they always have.
+  function rounded(r) { return Math.min(r, overlay.deco.rounding) }
   // Hyprland's blur size as configured. Checked against screenshots of
   // Hyprland frosting a see-through terminal over a static page: with the
   // blur run at the monitor's own scale (see `hyprScale`) the port matches
@@ -548,7 +553,7 @@ PanelWindow {
               ClippingRectangle {
                 id: tile
                 anchors.fill: parent
-                radius: 8
+                radius: surface.rounded(8)
                 color: "#0B0B0E"
 
                 // Each desktop is a small picture of the desktop: the same
@@ -582,7 +587,7 @@ PanelWindow {
                     y: mini.modelData.y * tile.height
                     width: Math.max(3, mini.modelData.w * tile.width)
                     height: Math.max(3, mini.modelData.h * tile.height)
-                    radius: 3
+                    radius: surface.rounded(3)
                     // Dark enough to read as a window against any wallpaper, rather
                     // than a grey square that could be anything.
                     color: mini.modelData.active ? Qt.rgba(0.10, 0.10, 0.13, 0.94)
@@ -667,7 +672,7 @@ PanelWindow {
             y: surface.tileTop
             width: surface.tileWidth
             height: surface.tileHeight
-            radius: 8
+            radius: surface.rounded(8)
             color: "transparent"
             border.width: 2
             border.color: Color.accent
@@ -1042,9 +1047,10 @@ PanelWindow {
         // that is still dissolving as it goes reads as lag.
         Behavior on opacity { enabled: !surface.sliding; NumberAnimation { duration: 150 } }
 
-        // Hyprland's rounding on the desktop, the overview's own once spread.
-        readonly property real radius: card.flying ? 3 + (14 - 3) * (1 - card.fly)
-                                     : overlay.deco.rounding + (14 - overlay.deco.rounding) * overlay.dress
+        // Hyprland's rounding on the desktop, the overview's own once spread,
+        // never rounder than Hyprland's.
+        readonly property real radius: card.flying ? surface.rounded(3) + (surface.rounded(14) - surface.rounded(3)) * (1 - card.fly)
+                                     : overlay.deco.rounding + (surface.rounded(14) - overlay.deco.rounding) * overlay.dress
 
         // Hyprland's shadow and border, which the card wears while it still
         // stands in for the window, and sheds as it becomes a card. Drawn by
@@ -1335,7 +1341,7 @@ PanelWindow {
                        && overlay.wsOf(card.modelData) !== surface.shownWorkspace
               implicitWidth: elsewhere.implicitWidth + 12
               implicitHeight: elsewhere.implicitHeight + 4
-              radius: 4
+              radius: surface.rounded(4)
               color: Qt.rgba(1, 1, 1, 0.14)
 
               Text {
