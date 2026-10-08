@@ -151,7 +151,10 @@ Scope {
   // delegate and builds new ones, and rebuilding a live capture halfway through
   // a swipe is a visible hitch. So the overview draws from a snapshot taken on
   // the frame the gesture arms, and `sync()` is the only thing that replaces it.
-  readonly property var liveShot: {
+  //
+  // Asked for, not bound: only `sync()` reads it, and as a binding it was
+  // rebuilt on every change the compositor reported, open or not.
+  function liveShot() {
     const out = []
     for (const top of (Hyprland.toplevels.values || [])) {
       if (!top.wayland || !top.workspace || top.workspace.id <= 0) continue
@@ -186,7 +189,27 @@ Scope {
   // geometry was stale when the swipe began snaps to the truth within a frame
   // or two, and a closing overview flies each card home to wherever its window
   // actually is by then.
+  //
+  // Rebuilt whenever the compositor answers, which it does on the first frame
+  // of every swipe, and mostly with nothing new to say. So what has not
+  // changed is handed back as the very object it was: QML passes on no change
+  // for that, and nothing drawn from it — every card, the whole layout — runs
+  // again. With a dozen windows, running it all again was a 30ms stall right
+  // as the overview started to move.
+  readonly property var memo: ({ geo: ({}), plans: ({}) })
+
+  /** `fresh`, or `old` if it says exactly the same thing. Flat objects. */
+  function kept(old, fresh) {
+    if (!old) return fresh
+    for (const k in fresh) if (old[k] !== fresh[k]) return fresh
+    for (const k in old) if (!(k in fresh)) return fresh
+    return old
+  }
+
   readonly property var geo: {
+    const before = root.memo.geo
+    let changed = false
+    let count = 0
     const out = ({})
     for (const top of (Hyprland.toplevels.values || [])) {
       const rect = root.rectOf(top)
@@ -197,7 +220,7 @@ Scope {
       // window still wearing its tag.
       const tagged = tags.some(t => String(t).replace(/\*$/, "") === "default-opacity")
       const active = root.isActive(top)
-      out[top.address] = {
+      const entry = root.kept(before[top.address], {
         x: rect.x - mon.x,
         y: rect.y - mon.y,
         w: rect.w,
@@ -207,12 +230,17 @@ Scope {
         title: top.title || "",
         opacity: tagged ? (active ? 0.985 : 0.96) : 1,
         focus: (top.lastIpcObject || {}).focusHistoryID,
-      }
+      })
+      if (entry !== before[top.address]) changed = true
+      out[top.address] = entry
+      count++
     }
+    if (!changed && count === Object.keys(before).length) return before
+    root.memo.geo = out
     return out
   }
 
-  readonly property var liveWorkspaces: {
+  function liveWorkspaces() {
     // Hyprland only makes a workspace once something is on it, so the ones that
     // exist are not the ones you can use. Always offer the first five — the
     // rule the bar follows too — plus any other that exists, so there is
@@ -250,6 +278,7 @@ Scope {
   // What each workspace holds, as fractions of its monitor, so a strip tile can
   // draw the shape of a desktop you are not looking at.
   readonly property var livePlans: {
+    const before = root.memo.plans
     const out = ({})
     for (const top of (Hyprland.toplevels.values || [])) {
       const space = top.workspace
@@ -272,6 +301,18 @@ Scope {
         key: top.address,
       })
     }
+    // The same, as the same objects; see `geo`.
+    let changed = Object.keys(out).length !== Object.keys(before).length
+    for (const id in out) {
+      const was = before[id]
+      const now = out[id]
+      const same = !!was && was.length === now.length
+                   && now.every((p, i) => root.kept(was[i], p) === was[i])
+      if (same) out[id] = was
+      else changed = true
+    }
+    if (!changed) return before
+    root.memo.plans = out
     return out
   }
 
@@ -343,7 +384,7 @@ Scope {
       const out = ({})
       root.stackSeen.forEach((key, i) => { out[key] = i })
       root.stackSeen = []
-      root.zOrder = out
+      if (root.kept(root.zOrder, out) !== root.zOrder) root.zOrder = out
       console.info("aerial-perf zorder " + Object.keys(out).length)
     }
   }
@@ -352,14 +393,14 @@ Scope {
     const perfA = Date.now()
     root.stackSeen = []
     stackQuery.ask("j/clients")
-    const next = root.liveShot
+    const next = root.liveShot()
     if (!root.sameWindows(root.shot, next)) {
       root.shot = next
       root.moved = ({})
     }
     // And a fresh frame of each, now: the one they kept is from last time.
     root.beat++
-    root.workspaces = root.liveWorkspaces
+    root.workspaces = root.liveWorkspaces()
     root.plans = root.livePlans
     if (root.stageId <= 0 && Hyprland.focusedWorkspace) root.stageId = Hyprland.focusedWorkspace.id
 
