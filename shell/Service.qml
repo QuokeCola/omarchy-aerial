@@ -260,6 +260,15 @@ Item {
     findWallpaper.running = true
   }
 
+  // Said on Hyprland's event socket whenever it changes, for other plugins —
+  // which cannot reach this service — to make way for the overview: the
+  // notification center slides its sheet aside, for one. A handful of events
+  // a swipe; the swipe's own progress is already out there as aerial,up-move.
+  readonly property string announced: service.open ? "open"
+                                    : service.t > 0.001 ? "showing"
+                                    : service.deskSlide ? "sliding" : "hidden"
+  onAnnouncedChanged: Hyprland.dispatch('hl.dsp.event("aerial-state,' + service.announced + '")')
+
   onShowingChanged: {
     if (service.showing) return
     service.findTheWallpaper()
