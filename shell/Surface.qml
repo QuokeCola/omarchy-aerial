@@ -146,8 +146,11 @@ PanelWindow {
 
   // ---- perf probe (temporary)
   property var perfSwaps: []
-  onVisibleChanged: if (surface.leading && overlay.service) overlay.service.perfMark(surface.visible ? "mapped" : "unmapped")
-  onCapturedChanged: if (surface.leading && overlay.service && overlay.opened) overlay.service.perfMark("captured=" + surface.captured)
+  Connections {
+    target: surface
+    function onVisibleChanged() { if (surface.leading && overlay.service) overlay.service.perfMark(surface.visible ? "mapped" : "unmapped") }
+    function onCapturedChanged() { if (surface.leading && overlay.service && overlay.opened) overlay.service.perfMark("captured=" + surface.captured) }
+  }
   Connections {
     target: stage.Window.window
     function onFrameSwapped() {
