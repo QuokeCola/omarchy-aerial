@@ -1144,8 +1144,8 @@ PanelWindow {
           readonly property int corner: Math.floor((card.radius + overlay.deco.border) * surface.hyprScale)
           readonly property int spread: Math.floor(overlay.deco.shadowRange * surface.hyprScale)
           readonly property color tint: card.focusedWindow ? overlay.deco.shadowColor : overlay.deco.shadowColorInactive
-          x: -reach / surface.hyprScale
-          y: -reach / surface.hyprScale
+          x: -reach / surface.hyprScale + overlay.deco.shadowOffsetX
+          y: -reach / surface.hyprScale + overlay.deco.shadowOffsetY
           width: (card.pxW + 2 * reach) / surface.hyprScale
           height: (card.pxH + 2 * reach) / surface.hyprScale
           z: -1
