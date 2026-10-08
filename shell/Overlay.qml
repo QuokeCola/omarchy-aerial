@@ -96,11 +96,31 @@ Scope {
   // keeps the overview at a few percent of a core instead of half of one.
   property int beat: 0
 
+  // And not at all while the overview is moving. Every capture that lands is
+  // a texture upload and a redraw of everything over it, frosted glass
+  // included, on frames that are already the busiest there are; a window
+  // playing video in the middle of a swipe was paying for both. Nobody reads
+  // a thumbnail in flight, so while the fingers are down or a spring is
+  // settling the cards hold their frame, and catch up the moment it lands.
+  readonly property bool still: root.opened && !root.settling && !root.moving && !root.deskSliding
+
   Timer {
     interval: 80
     repeat: true
-    running: root.opened
+    running: root.still
     onTriggered: root.beat++
+  }
+
+  onStillChanged: if (root.still) root.beat++
+
+  // One fresh frame on the way home, though: a closing card hands over to its
+  // window in the next few frames, and one a whole swipe stale would show
+  // the window jump to the present as it did. Asked for once, as it nears.
+  property bool nearHome: false
+  onTChanged: {
+    const near = root.opened && root.t < 0.2 && !!root.service && root.service.goal < 0.5
+    if (near && !root.nearHome) root.beat++
+    root.nearHome = near
   }
 
   // ------------------------------------------------------------- what is there

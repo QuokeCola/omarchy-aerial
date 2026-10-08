@@ -1229,22 +1229,16 @@ PanelWindow {
             // than all eight captures put together. On the clock instead, they
             // still read as alive and the surface redraws a dozen times a
             // second rather than sixty.
-            // Except right at either end, where the card is about to hand over
-            // to the window itself (or has just taken over from it): there,
-            // a card a twelfth of a second stale is a visible tick as the
-            // real window replaces it. Live for those few frames only.
-            // Only on the way in or out of a swipe up or down, not while
-            // sliding between desktops at no zoom: live, every window on
-            // screen is captured every frame, which is exactly the load the
-            // clock exists to avoid, and the slide stutters under it.
+            // Not even at either end of a swipe, where the card hands over to
+            // its window: one fresh frame is asked for as the swipe begins
+            // and another as a closing card nears home (see `beat`), which is
+            // as current as live was, without capturing every window on
+            // screen on every frame of the swipe.
             //
-            // And until its first frame is in: a card waits for its capture
-            // before the overview can appear, and waiting for the clock to
-            // come round was most of the wait. Live, the first frame arrives
-            // as soon as the compositor can give it.
-            live: card.shown && overlay.opened
-                  && (!shot.hasContent
-                      || (!overlay.deskSliding && overlay.t > 0.0005 && overlay.t < 0.15))
+            // Live only until its first frame is in: a card waits for its
+            // capture before the overview can appear, and live, the first
+            // frame arrives as soon as the compositor can give it.
+            live: card.shown && overlay.opened && !shot.hasContent
           }
 
           Connections {
