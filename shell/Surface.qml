@@ -171,6 +171,8 @@ PanelWindow {
 
   // ---- perf probe (temporary)
   property var perfSwaps: []
+  // Card Behaviors and flights animate on their own clocks.
+  FrameAnimation { id: slidingProbe; running: false }
   readonly property bool perfMapped: surface.visible
   onPerfMappedChanged: if (surface.leading && overlay.service) overlay.service.perfMark(surface.perfMapped ? "mapped" : "unmapped")
   readonly property bool perfCaptured: surface.captured && overlay.opened
@@ -179,7 +181,9 @@ PanelWindow {
     target: stage.Window.window
     function onFrameSwapped() {
       if (!surface.leading || !overlay.service || !overlay.service.perfT0) return
-      surface.perfSwaps.push(Date.now() - overlay.service.perfT0)
+      const svc = overlay.service
+      const moving = svc.animating || overlay.moving || slidingProbe.running
+      surface.perfSwaps.push((Date.now() - svc.perfT0) * (moving ? 1 : -1))
     }
   }
   Timer {
@@ -194,10 +198,13 @@ PanelWindow {
       if (busy) { was = true; return }
       if (!was) return
       was = false
-      const s = surface.perfSwaps
+      const raw = surface.perfSwaps
       surface.perfSwaps = []
+      // Only gaps with something moving at both ends: an open overview at
+      // rest redraws only when a capture lands.
+      const s = raw.map(Math.abs)
       const gaps = []
-      for (let i = 1; i < s.length; i++) gaps.push(s[i] - s[i - 1])
+      for (let i = 1; i < raw.length; i++) if (raw[i] > 0 && raw[i - 1] > 0) gaps.push(s[i] - s[i - 1])
       const sorted = gaps.slice().sort((a, b) => a - b)
       const pct = q => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : 0
       const mean = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 0
@@ -205,7 +212,7 @@ PanelWindow {
       console.info("aerial-perf swaps n=" + s.length + " first=" + (s[0] || -1) + " span=" + (s.length ? s[s.length - 1] - s[0] : 0)
                    + " mean=" + mean.toFixed(1) + " p50=" + pct(0.5) + " p95=" + pct(0.95) + " max=" + (sorted[sorted.length - 1] || 0)
                    + " >12=" + gaps.filter(g => g > 12).length + " >25=" + gaps.filter(g => g > 25).length
-                   + " big=" + gaps.map((g, i) => g > 25 ? (s[i] + ":" + g) : "").filter(x => x).join(","))
+                   + " big=" + gaps.filter(g => g > 25).join(","))
       svc.perfT0 = 0
     }
   }
