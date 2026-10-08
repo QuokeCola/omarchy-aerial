@@ -68,7 +68,7 @@ Scope {
   }
 
   /** The overview is on screen, matching the desktop exactly: start moving. */
-  function revealed() { if (root.reveal < 1 && !revealing.running) revealing.restart() }
+  function revealed() { if (root.service) root.service.perfMark("revealed"); if (root.reveal < 1 && !revealing.running) revealing.restart() }
   readonly property bool active: root.service ? root.service.open : false
   // `t` is changing every frame, and cards must follow it, not ease after it.
   readonly property bool settling: root.service ? root.service.animating : false
@@ -325,6 +325,7 @@ Scope {
   }
 
   function sync() {
+    const perfA = Date.now()
     if (!stackQuery.running) stackQuery.running = true
     const next = root.liveShot
     if (!root.sameWindows(root.shot, next)) {
@@ -343,6 +344,7 @@ Scope {
       const active = root.shot.find(w => root.geo[w.key] && root.geo[w.key].active)
       if (active) root.selectedKey = active.key
     }
+    if (root.service) root.service.perfMark("sync", Date.now() - perfA)
   }
 
   function forget() {

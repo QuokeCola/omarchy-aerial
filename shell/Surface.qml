@@ -141,6 +141,46 @@ PanelWindow {
     function onOpenedChanged() { if (!overlay.opened) surface.ready = false }
   }
 
+  // ---- perf probe (temporary)
+  property var perfSwaps: []
+  onVisibleChanged: if (surface.leading && overlay.service) overlay.service.perfMark(surface.visible ? "mapped" : "unmapped")
+  onCapturedChanged: if (surface.leading && overlay.service && overlay.opened) overlay.service.perfMark("captured=" + surface.captured)
+  onReadyChanged: if (surface.leading && overlay.service && surface.ready) overlay.service.perfMark("ready")
+  Connections {
+    target: stage.Window.window
+    function onFrameSwapped() {
+      if (!surface.leading || !overlay.service || !overlay.service.perfT0) return
+      surface.perfSwaps.push(Date.now() - overlay.service.perfT0)
+    }
+  }
+  Timer {
+    interval: 100
+    repeat: true
+    running: surface.leading
+    property bool was: false
+    onTriggered: {
+      const svc = overlay.service
+      if (!svc) return
+      const busy = svc.animating || overlay.moving || (svc.t > 0.001 && svc.t < 0.999) || svc.deskSlide
+      if (busy) { was = true; return }
+      if (!was) return
+      was = false
+      const s = surface.perfSwaps
+      surface.perfSwaps = []
+      const gaps = []
+      for (let i = 1; i < s.length; i++) gaps.push(s[i] - s[i - 1])
+      const sorted = gaps.slice().sort((a, b) => a - b)
+      const pct = q => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : 0
+      const mean = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 0
+      console.info("aerial-perf marks " + svc.perfMarks.join(" "))
+      console.info("aerial-perf swaps n=" + s.length + " first=" + (s[0] || -1) + " span=" + (s.length ? s[s.length - 1] - s[0] : 0)
+                   + " mean=" + mean.toFixed(1) + " p50=" + pct(0.5) + " p95=" + pct(0.95) + " max=" + (sorted[sorted.length - 1] || 0)
+                   + " >12=" + gaps.filter(g => g > 12).length + " >25=" + gaps.filter(g => g > 25).length
+                   + " big=" + gaps.map((g, i) => g > 25 ? (s[i] + ":" + g) : "").filter(x => x).join(","))
+      svc.perfT0 = 0
+    }
+  }
+
   // Every card on screen has its first frame. Until then the desktop behind
   // must stay visible, or a window whose capture is late blinks out.
   readonly property bool captured: {

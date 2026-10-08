@@ -21,6 +21,15 @@ Item {
   property var shell: null
   property var manifest: null
 
+  // ---- perf probe (temporary)
+  property double perfT0: 0
+  property var perfMarks: []
+  function perfMark(name, extra) {
+    const now = Date.now()
+    if (name === "begin" || service.perfT0 === 0) { service.perfT0 = now; service.perfMarks = [] }
+    service.perfMarks.push(name + "@" + (now - service.perfT0) + (extra !== undefined ? "(" + extra + ")" : ""))
+  }
+
   // 0 = closed, 1 = open. Anything between is a swipe in progress.
   property real t: 0
   // Not "visible": Item declares that FINAL, and shadowing it stops the whole
@@ -103,9 +112,11 @@ Item {
   // events, and a window that opened while nothing was watching has no
   // geometry and the wrong workspace — which is an empty overview.
   function refreshModels() {
+    const a = Date.now()
     Hyprland.refreshMonitors()
     Hyprland.refreshWorkspaces()
     Hyprland.refreshToplevels()
+    if (service.perfT0) service.perfMark("refresh", Date.now() - a)
   }
 
   function show() {
@@ -482,6 +493,8 @@ Item {
     const phase = what.slice(dash + 1)
 
     if (who === "side") {
+      if (phase === "begin") service.perfMark("begin", "side")
+      if (phase === "end") service.perfMark("end")
       if (phase === "begin" && !service.open) {
         // Half open or half closed, a sideways swipe means nothing.
         if (service.showing) return
@@ -504,6 +517,8 @@ Item {
     const opening = who === "up" || who === "allup"
     const wantsEverything = who === "allup" || who === "alldown"
 
+    if (phase === "begin") service.perfMark("begin", who)
+    if (phase === "end") service.perfMark("end")
     switch (phase) {
     case "begin":
       if (opening && service.open) {
