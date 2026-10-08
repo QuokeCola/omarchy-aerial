@@ -1272,6 +1272,14 @@ PanelWindow {
             id: shot
             anchors.fill: parent
             captureSource: card.modelData.capture
+            // Never quite opaque. A capture is drawn as an opaque texture —
+            // copied over what is behind it, alpha and all — and a terminal's
+            // see-through background then punches a hole through the
+            // overview to the real windows under it, rather than showing the
+            // frosted glass. Short of 1, Qt blends it like anything else. (The
+            // ClippingRectangle this used to sit in hid that by drawing it
+            // through a layer first.)
+            opacity: 0.999
             // Never live, not even for the window under the pointer. A live
             // capture is a texture that changes every frame, and one of those
             // makes the compositor redraw this whole surface sixty times a
