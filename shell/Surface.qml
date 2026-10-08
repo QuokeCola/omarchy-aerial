@@ -107,7 +107,7 @@ PanelWindow {
   function floatBlurFor(key) {
     const at = surface.floatStack.indexOf(key)
     const level = at >= 0 ? floatLevels.itemAt(at) : null
-    return level ? level.output : baseBlur.output
+    return level ? level.output : wallBlur.output
   }
 
   // The part of the screen windows live in: all of it, less what the bar and
@@ -201,7 +201,7 @@ PanelWindow {
       const sorted = gaps.slice().sort((a, b) => a - b)
       const pct = q => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : 0
       const mean = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 0
-      console.info("aerial-perf marks " + svc.perfMarks.join(" "))
+      console.info("aerial-perf marks dpr=" + surface.pixelRatio + " " + svc.perfMarks.join(" "))
       console.info("aerial-perf swaps n=" + s.length + " first=" + (s[0] || -1) + " span=" + (s.length ? s[s.length - 1] - s[0] : 0)
                    + " mean=" + mean.toFixed(1) + " p50=" + pct(0.5) + " p95=" + pct(0.95) + " max=" + (sorted[sorted.length - 1] || 0)
                    + " >12=" + gaps.filter(g => g > 12).length + " >25=" + gaps.filter(g => g > 25).length
@@ -793,12 +793,51 @@ PanelWindow {
       }
     }
 
-    // Behind a tiled window: the desktop and the strip.
+    // Behind a tiled window, as the compositor has it: the wallpaper. Which
+    // does not change while the overview is up, so this is blurred once as it
+    // opens rather than on every frame of the swipe — the strip sliding in and
+    // the bar fading made `base` new each frame, and the whole chain ran again
+    // for a picture no card at rest is ever over.
+    Item {
+      id: backdrop
+      anchors.fill: parent
+
+      Image {
+        anchors.fill: parent
+        source: overlay.wallpaperUrl
+        visible: overlay.wallpaper !== ""
+        fillMode: wall.fillMode
+        sourceSize: wall.sourceSize
+        smooth: true
+        asynchronous: true
+        cache: true
+      }
+    }
+
+    HyprBlur {
+      id: wallBlur
+      anchors.fill: parent
+      sourceItem: backdrop
+      hideSource: true
+      live: surface.glass && overlay.opened
+      pixelSize: baseBlur.pixelSize
+      size: baseBlur.size
+      passes: baseBlur.passes
+      noise: baseBlur.noise
+      contrast: baseBlur.contrast
+      brightness: baseBlur.brightness
+      vibrancy: baseBlur.vibrancy
+      vibrancyDarkness: baseBlur.vibrancyDarkness
+    }
+
+    // The desktop and the strip, live: what a window carried over the strip
+    // has behind it. Only while one is.
+    readonly property bool overStrip: overlay.dragKey !== ""
     HyprBlur {
       id: baseBlur
       anchors.fill: parent
       sourceItem: base
-      live: surface.glass && overlay.opened
+      live: surface.glass && overlay.opened && stage.overStrip
       pixelSize: Qt.size(Math.round(surface.width * surface.hyprScale), Math.round(surface.height * surface.hyprScale))
       size: overlay.deco.blurSize * surface.blurScale
       passes: overlay.deco.blurPasses
@@ -1188,7 +1227,8 @@ PanelWindow {
           anchors.fill: parent
           visible: card.frostedGlass
           opacity: frame.opacity
-          property var source: card.floating ? surface.floatBlurFor(card.modelData.key) : baseBlur.output
+          property var source: card.floating ? surface.floatBlurFor(card.modelData.key)
+                             : (stage.overStrip ? baseBlur.output : wallBlur.output)
           // Where the card is on screen, scaled about its middle as it is
           // drawn, as a fraction of the screen.
           property vector4d area: {
@@ -1204,10 +1244,20 @@ PanelWindow {
           fragmentShader: Qt.resolvedUrl("blur/frost.frag.qsb")
         }
 
-        ClippingRectangle {
+        // Drawn as it is when its corners are square. Rounded, it goes
+        // through one layer and is cut to shape on the way out — not a
+        // ClippingRectangle, which keeps a second layer for the shape, and
+        // reallocates and redraws both on every frame a card changes size,
+        // which in a swipe is every frame, for every card.
+        Rectangle {
           id: frame
           anchors.fill: parent
-          radius: card.radius
+          layer.enabled: card.radius > 0.5
+          layer.effect: ShaderEffect {
+            property vector2d size: Qt.vector2d(frame.width, frame.height)
+            property real radius: card.radius
+            fragmentShader: Qt.resolvedUrl("deco/clip.frag.qsb")
+          }
           // As see-through as Hyprland draws the window, becoming solid.
           opacity: card.real.opacity + (1 - card.real.opacity) * overlay.dress
           // Under the capture, so a window whose first frame has not arrived
