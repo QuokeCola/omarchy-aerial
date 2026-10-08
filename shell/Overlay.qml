@@ -371,28 +371,24 @@ Scope {
   // stacking order; the order `hyprctl clients` lists them in is — it is the
   // order they are drawn in. Asked for each time the overview opens.
   property var zOrder: ({})
-  // Only the order matters, and each client's address is on a line of its
-  // own, so this reads the addresses as they arrive rather than the JSON.
-  property var stackSeen: []
-  HyprSocket {
+  Process {
     id: stackQuery
-    onLine: text => {
-      const found = /"address":\s*"0x([0-9a-fA-F]+)"/.exec(text)
-      if (found) root.stackSeen.push(found[1])
-    }
-    onAnswered: {
-      const out = ({})
-      root.stackSeen.forEach((key, i) => { out[key] = i })
-      root.stackSeen = []
-      if (root.kept(root.zOrder, out) !== root.zOrder) root.zOrder = out
-      console.info("aerial-perf zorder " + Object.keys(out).length)
+    command: ["/usr/bin/hyprctl", "clients", "-j"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          const out = ({})
+          JSON.parse(text).forEach((c, i) => { out[String(c.address).replace(/^0x/, "")] = i })
+          // Only when it changed; see `geo`.
+          if (root.kept(root.zOrder, out) !== root.zOrder) root.zOrder = out
+        } catch (e) {}
+      }
     }
   }
 
   function sync() {
     const perfA = Date.now()
-    root.stackSeen = []
-    stackQuery.ask("j/clients")
+    if (!stackQuery.running) stackQuery.running = true
     const next = root.liveShot()
     if (!root.sameWindows(root.shot, next)) {
       root.shot = next
@@ -896,16 +892,21 @@ Scope {
   // likely over another card. So pointer warps are switched off for exactly
   // that one dispatch, and put back as they were, in one go.
   property string focusWanted: ""
-  HyprSocket {
+  Process {
     id: quietFocus
-    onAnswered: if (root.focusWanted !== "") root.focusQuietly(root.focusWanted)
+    onRunningChanged: if (!running && root.focusWanted !== "") root.focusQuietly(root.focusWanted)
   }
   function focusQuietly(key) {
-    root.focusWanted = key
-    if (quietFocus.ask("eval local w = hl.get_config('cursor.no_warps'); hl.config({ cursor = { no_warps = true } }); "
-                       + "hl.dispatch(hl.dsp.focus({ window = 'address:0x" + key + "' })); "
-                       + "hl.config({ cursor = { no_warps = w } })"))
-      root.focusWanted = ""
+    if (quietFocus.running) {
+      root.focusWanted = key
+      return
+    }
+    root.focusWanted = ""
+    quietFocus.command = ["/usr/bin/hyprctl", "eval",
+      "local w = hl.get_config('cursor.no_warps'); hl.config({ cursor = { no_warps = true } }); "
+      + "hl.dispatch(hl.dsp.focus({ window = 'address:0x" + key + "' })); "
+      + "hl.config({ cursor = { no_warps = w } })"]
+    quietFocus.running = true
   }
 
   function closeWindow(address) {
