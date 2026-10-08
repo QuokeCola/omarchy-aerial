@@ -96,11 +96,33 @@ Scope {
   // keeps the overview at a few percent of a core instead of half of one.
   property int beat: 0
 
+  // And not at all while the overview is moving. Every capture that lands is
+  // a texture upload and a redraw of everything over it, frosted glass
+  // included, on frames that are already the busiest there are; a window
+  // playing video in the middle of a swipe was paying for both. Nobody reads
+  // a thumbnail in flight, so while the fingers are down or a spring is
+  // settling the cards hold their frame, and catch up the moment it lands.
+  readonly property bool still: root.opened && !root.settling && !root.moving && !root.deskSliding
+
   Timer {
     interval: 80
     repeat: true
-    running: root.opened
+    running: root.still
     onTriggered: root.beat++
+  }
+
+  onStillChanged: if (root.still) root.beat++
+
+  // One fresh frame on the way home, though: a closing card hands over to its
+  // window in the next few frames, and one a whole swipe stale would show
+  // the window jump to the present as it did. Asked for once, as it nears.
+  property bool nearHome: false
+  property real lastT: 0
+  onTChanged: {
+    const near = root.opened && root.t < 0.2 && root.t < root.lastT
+    if (near && !root.nearHome) root.beat++
+    root.nearHome = near
+    root.lastT = root.t
   }
 
   // ------------------------------------------------------------- what is there
@@ -131,7 +153,10 @@ Scope {
   // delegate and builds new ones, and rebuilding a live capture halfway through
   // a swipe is a visible hitch. So the overview draws from a snapshot taken on
   // the frame the gesture arms, and `sync()` is the only thing that replaces it.
-  readonly property var liveShot: {
+  //
+  // Asked for, not bound: only `sync()` reads it, and as a binding it was
+  // rebuilt on every change the compositor reported, open or not.
+  function liveShot() {
     const out = []
     for (const top of (Hyprland.toplevels.values || [])) {
       if (!top.wayland || !top.workspace || top.workspace.id <= 0) continue
@@ -166,7 +191,27 @@ Scope {
   // geometry was stale when the swipe began snaps to the truth within a frame
   // or two, and a closing overview flies each card home to wherever its window
   // actually is by then.
+  //
+  // Rebuilt whenever the compositor answers, which it does on the first frame
+  // of every swipe, and mostly with nothing new to say. So what has not
+  // changed is handed back as the very object it was: QML passes on no change
+  // for that, and nothing drawn from it — every card, the whole layout — runs
+  // again. With a dozen windows, running it all again was a 30ms stall right
+  // as the overview started to move.
+  readonly property var memo: ({ geo: ({}), rects: ({}), plans: ({}) })
+
+  /** `fresh`, or `old` if it says exactly the same thing. Flat objects. */
+  function kept(old, fresh) {
+    if (!old) return fresh
+    for (const k in fresh) if (old[k] !== fresh[k]) return fresh
+    for (const k in old) if (!(k in fresh)) return fresh
+    return old
+  }
+
   readonly property var geo: {
+    const before = root.memo.geo
+    let changed = false
+    let count = 0
     const out = ({})
     for (const top of (Hyprland.toplevels.values || [])) {
       const rect = root.rectOf(top)
@@ -177,7 +222,7 @@ Scope {
       // window still wearing its tag.
       const tagged = tags.some(t => String(t).replace(/\*$/, "") === "default-opacity")
       const active = root.isActive(top)
-      out[top.address] = {
+      const entry = root.kept(before[top.address], {
         x: rect.x - mon.x,
         y: rect.y - mon.y,
         w: rect.w,
@@ -186,13 +231,37 @@ Scope {
         floating: (top.lastIpcObject || {}).floating === true,
         title: top.title || "",
         opacity: tagged ? (active ? 0.985 : 0.96) : 1,
-        focus: (top.lastIpcObject || {}).focusHistoryID,
-      }
+      })
+      if (entry !== before[top.address]) changed = true
+      out[top.address] = entry
+      count++
     }
+    if (!changed && count === Object.keys(before).length) return before
+    root.memo.geo = out
     return out
   }
 
-  readonly property var liveWorkspaces: {
+  // Where each window is and nothing else, which is all the layout needs: a
+  // terminal retitling itself, or focus moving, changes `geo` but not this,
+  // and the spread is not laid out again for it.
+  readonly property var rects: {
+    const before = root.memo.rects
+    const out = ({})
+    let changed = false
+    let count = 0
+    for (const key in root.geo) {
+      const g = root.geo[key]
+      const entry = root.kept(before[key], { x: g.x, y: g.y, w: g.w, h: g.h })
+      if (entry !== before[key]) changed = true
+      out[key] = entry
+      count++
+    }
+    if (!changed && count === Object.keys(before).length) return before
+    root.memo.rects = out
+    return out
+  }
+
+  function liveWorkspaces() {
     // Hyprland only makes a workspace once something is on it, so the ones that
     // exist are not the ones you can use. Always offer the first five — the
     // rule the bar follows too — plus any other that exists, so there is
@@ -230,6 +299,7 @@ Scope {
   // What each workspace holds, as fractions of its monitor, so a strip tile can
   // draw the shape of a desktop you are not looking at.
   readonly property var livePlans: {
+    const before = root.memo.plans
     const out = ({})
     for (const top of (Hyprland.toplevels.values || [])) {
       const space = top.workspace
@@ -252,6 +322,18 @@ Scope {
         key: top.address,
       })
     }
+    // The same, as the same objects; see `geo`.
+    let changed = Object.keys(out).length !== Object.keys(before).length
+    for (const id in out) {
+      const was = before[id]
+      const now = out[id]
+      const same = !!was && was.length === now.length
+                   && now.every((p, i) => root.kept(was[i], p) === was[i])
+      if (same) out[id] = was
+      else changed = true
+    }
+    if (!changed) return before
+    root.memo.plans = out
     return out
   }
 
@@ -318,7 +400,8 @@ Scope {
         try {
           const out = ({})
           JSON.parse(text).forEach((c, i) => { out[String(c.address).replace(/^0x/, "")] = i })
-          root.zOrder = out
+          // Only when it changed; see `geo`.
+          if (root.kept(root.zOrder, out) !== root.zOrder) root.zOrder = out
         } catch (e) {}
       }
     }
@@ -326,14 +409,14 @@ Scope {
 
   function sync() {
     if (!stackQuery.running) stackQuery.running = true
-    const next = root.liveShot
+    const next = root.liveShot()
     if (!root.sameWindows(root.shot, next)) {
       root.shot = next
       root.moved = ({})
     }
     // And a fresh frame of each, now: the one they kept is from last time.
     root.beat++
-    root.workspaces = root.liveWorkspaces
+    root.workspaces = root.liveWorkspaces()
     root.plans = root.livePlans
     if (root.stageId <= 0 && Hyprland.focusedWorkspace) root.stageId = Hyprland.focusedWorkspace.id
 

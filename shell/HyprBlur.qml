@@ -22,6 +22,8 @@ Item {
   // Physical pixels, which is what Hyprland blurs in.
   property size pixelSize: Qt.size(1, 1)
   property bool live: true
+  // Take the source out of the scene: for one that exists only to be blurred.
+  property bool hideSource: false
 
   property real size: 8
   property int passes: 1
@@ -54,6 +56,7 @@ Item {
     id: captured
     width: 1; height: 1; opacity: 0
     sourceItem: blur.sourceItem
+    hideSource: blur.hideSource
     textureSize: blur.level(0)
     live: blur.live
     smooth: true

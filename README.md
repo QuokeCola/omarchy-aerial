@@ -27,7 +27,16 @@ clock about twelve times a second. Not live, deliberately: a texture that
 changes every frame makes the compositor redraw the whole overview sixty times a
 second, wallpaper and all, and one live thumbnail cost more than twelve-a-second
 for all eight put together. Eight windows come to about 6% of one core; leaving
-a single one live took it to 43%.
+a single one live took it to 43%. While the overview is moving they hold still
+and catch up as it lands: nobody reads a thumbnail in flight, and the frames of
+a swipe are the ones that can least afford a texture upload each.
+
+**It is there on the first frame.** The overview's surface stays mapped, empty
+and click-through, between swipes, so a swipe starts drawing on the very next
+frame rather than after the 60 to 100ms it takes to map a fresh one — which
+was long enough to feel as the overview sticking, then jumping to catch up.
+Over a fullscreen window it unmaps, so a fullscreen video still goes straight
+to the display.
 
 **Nothing to install into the compositor.** No Hyprland plugin to rebuild every
 time Hyprland updates. The gesture is registered through Hyprland 0.56's own Lua
