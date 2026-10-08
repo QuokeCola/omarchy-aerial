@@ -27,8 +27,28 @@ FrameAnimation {
 
   signal settled()
 
+  // Fingers down: on `to` exactly, unless that is further than `limit` a
+  // second would carry it. A flick covers a whole screen in a frame or two,
+  // which is not a movement anyone can see, only a jump; capped, it is still
+  // a quick slide, and lands at the speed it had. An ordinary drag never
+  // comes near the cap and stays nailed to the fingers.
+  property bool chasing: false
+  property real limit: 0
+
+  /** Fingers down: follow `to`, at no more than `speed` a second. */
+  function chase(to, speed) {
+    spring.chasing = true
+    spring.limit = speed
+    spring.target = to
+    if (!spring.running) spring.start()
+  }
+
+  /** Still catching up with the fingers. */
+  readonly property bool lagging: spring.running && spring.chasing
+
   /** Chase `to`, keeping whatever position and speed there already is. */
   function follow(to) {
+    spring.chasing = false
     spring.target = to
     if (!spring.running) spring.start()
   }
@@ -62,6 +82,17 @@ FrameAnimation {
   }
 
   onTriggered: {
+    if (spring.chasing) {
+      const dt = Math.min(spring.frameTime, 1 / 30)
+      const most = spring.limit * dt
+      const step = Math.max(-most, Math.min(most, spring.target - spring.value))
+      spring.velocity = dt > 0 ? step / dt : 0
+      spring.value += step
+      // Caught up: rest until the fingers move again. Not `settled`: the
+      // fingers are still down.
+      if (Math.abs(spring.target - spring.value) < 1e-6) spring.stop()
+      return
+    }
     // Small fixed steps, so a dropped frame does not become a jump.
     let left = Math.min(spring.frameTime, 1 / 30)
     const w = spring.stiffness

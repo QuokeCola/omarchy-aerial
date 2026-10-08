@@ -145,6 +145,10 @@ Item {
 
   function toggle() { service.goal > 0.5 ? service.hide() : service.show() }
 
+  // The fastest the overview follows the fingers, in `t` a second: a full
+  // open in an eighth of a second. See Spring.chase.
+  readonly property real chaseSpeed: 8
+
   // How it lands once the fingers lift: back from a stretch, or the rest of
   // the way open or closed.
   readonly property real landStiffness: 56
@@ -543,7 +547,7 @@ Item {
       } else {
         service.goal = service.scrubFrom * (1 - Math.min(1, value))
       }
-      tSpring.value = service.goal
+      tSpring.chase(service.goal, service.chaseSpeed)
       service.track(service.goal)
       break
 
@@ -560,7 +564,10 @@ Item {
         // The speed the overview had on screen as the fingers lifted — none,
         // if they had come to rest first.
         const resting = Date.now() - service.lastAt > 80
-        const carry = cancelled || resting ? 0 : service.handSpeed
+        // Still catching up with a flick, it goes on at the speed it is
+        // actually moving on screen.
+        const carry = tSpring.lagging ? tSpring.velocity
+                    : (cancelled || resting ? 0 : service.handSpeed)
         // Spring running before the fingers are let go of, so nothing ever
         // sees a frame where neither is moving the overview.
         service.glideTo(wantOpen, speed, carry)
