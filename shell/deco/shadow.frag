@@ -29,6 +29,18 @@ float modifiedLength(vec2 a, float p) {
     return pow(pow(abs(a.x), p) + pow(abs(a.y), p), 1.0 / p);
 }
 
+// Hyprland colour-manages its shadow: the colour is premultiplied in linear
+// light and brought back, not premultiplied as it stands. For a dark shadow
+// that is markedly lighter, so done here the plain way the card wore a
+// shadow about half as strong again as its window's, and it visibly lifted
+// as the window took back over.
+vec3 toLinear(vec3 c) {
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+vec3 fromLinear(vec3 c) {
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+}
+
 void main() {
     float r = range + radius;
     vec2 pixCoord = fullSize * qt_TexCoord0;
@@ -59,5 +71,5 @@ void main() {
             a *= pow(smallest / range, shadowPower);
     }
 
-    fragColor = vec4(color.rgb * a, a) * qt_Opacity;
+    fragColor = vec4(fromLinear(toLinear(color.rgb) * a), a) * qt_Opacity;
 }

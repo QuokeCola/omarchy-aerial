@@ -288,6 +288,8 @@ Item {
     shadowRange: 0,
     shadowColor: "transparent",
     shadowColorInactive: "transparent",
+    shadowOffsetX: 0,
+    shadowOffsetY: 0,
     blur: false,
     blurSize: 8,
     blurPasses: 1,
@@ -309,6 +311,7 @@ Item {
     "decoration:blur:noise", "decoration:blur:contrast", "decoration:blur:brightness",
     "decoration:blur:vibrancy", "decoration:blur:vibrancy_darkness",
     "decoration:shadow:render_power", "decoration:rounding_power",
+    "decoration:shadow:offset",
   ]
 
   Process {
@@ -324,8 +327,15 @@ Item {
   // A gradient is a list of them and an angle; the first colour stands for it.
   function colourOf(entry) {
     const raw = entry && (entry.gradient || entry.color || entry.str)
-    const hex = String(raw || "").trim().split(/\s+/)[0]
-    return /^[0-9a-fA-F]{8}$/.test(hex) ? "#" + hex : "transparent"
+    // A gradient can come back with its angle run straight on, as in
+    // "143a332a0deg": the colour is the first eight hex digits either way.
+    const hex = /^\s*([0-9a-fA-F]{8})/.exec(String(raw || ""))
+    return hex ? "#" + hex[1] : "transparent"
+  }
+
+  function vecOf(entry, i) {
+    const v = entry && entry.vec2
+    return v && v.length > i ? Number(v[i]) || 0 : 0
   }
 
   function takeDeco(text) {
@@ -352,6 +362,11 @@ Item {
       shadowColor: service.colourOf(byName["decoration:shadow:color"]),
       shadowColorInactive: service.colourOf(byName["decoration:shadow:color_inactive"]
                                             || byName["decoration:shadow:color"]),
+      // Where Hyprland moves the shadow from under the window, in logical
+      // pixels: a theme that drops it a little below has to be matched, or
+      // the shadow jumps as the windows take back over.
+      shadowOffsetX: service.vecOf(byName["decoration:shadow:offset"], 0),
+      shadowOffsetY: service.vecOf(byName["decoration:shadow:offset"], 1),
       blur: !!(blurOn && (blurOn.bool === true || blurOn.int === 1)),
       blurSize: Math.max(1, num("decoration:blur:size")),
       blurPasses: Math.max(1, num("decoration:blur:passes")),
