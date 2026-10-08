@@ -301,7 +301,7 @@ PanelWindow {
   // openings (see `sync`), so the snapshot they were built from can be older
   // than the last time a window moved.
   readonly property var matching: surface.monitorWindows.filter(w => overlay.matches(w)).map(w => {
-    const now = overlay.geo[w.key]
+    const now = overlay.rects[w.key]
     return now ? Object.assign({}, w, { x: now.x, y: now.y, w: now.w, h: now.h }) : w
   })
 
@@ -1302,8 +1302,11 @@ PanelWindow {
           Connections {
             target: overlay
             // Only the cards you can actually see are worth a frame; the rest
-            // are kept alive purely so that showing them is instant.
-            function onBeatChanged() { if (card.shown || card.flying) shot.captureFrame() }
+            // are kept alive purely so that showing them is instant. And only
+            // once they have a first frame: until then they are live anyway,
+            // and asking a capture that has not started yet for a frame only
+            // gets a warning back.
+            function onBeatChanged() { if ((card.shown || card.flying) && shot.hasContent) shot.captureFrame() }
           }
 
           // Coming into view does not wait for the next beat. Without this a
@@ -1311,7 +1314,7 @@ PanelWindow {
           // clock comes round, which is the blank tile people saw.
           Connections {
             target: card
-            function onShownChanged() { if (card.shown) shot.captureFrame() }
+            function onShownChanged() { if (card.shown && shot.hasContent) shot.captureFrame() }
           }
         }
 

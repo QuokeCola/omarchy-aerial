@@ -196,7 +196,7 @@ Scope {
   // for that, and nothing drawn from it — every card, the whole layout — runs
   // again. With a dozen windows, running it all again was a 30ms stall right
   // as the overview started to move.
-  readonly property var memo: ({ geo: ({}), plans: ({}) })
+  readonly property var memo: ({ geo: ({}), rects: ({}), plans: ({}) })
 
   /** `fresh`, or `old` if it says exactly the same thing. Flat objects. */
   function kept(old, fresh) {
@@ -229,7 +229,6 @@ Scope {
         floating: (top.lastIpcObject || {}).floating === true,
         title: top.title || "",
         opacity: tagged ? (active ? 0.985 : 0.96) : 1,
-        focus: (top.lastIpcObject || {}).focusHistoryID,
       })
       if (entry !== before[top.address]) changed = true
       out[top.address] = entry
@@ -237,6 +236,26 @@ Scope {
     }
     if (!changed && count === Object.keys(before).length) return before
     root.memo.geo = out
+    return out
+  }
+
+  // Where each window is and nothing else, which is all the layout needs: a
+  // terminal retitling itself, or focus moving, changes `geo` but not this,
+  // and the spread is not laid out again for it.
+  readonly property var rects: {
+    const before = root.memo.rects
+    const out = ({})
+    let changed = false
+    let count = 0
+    for (const key in root.geo) {
+      const g = root.geo[key]
+      const entry = root.kept(before[key], { x: g.x, y: g.y, w: g.w, h: g.h })
+      if (entry !== before[key]) changed = true
+      out[key] = entry
+      count++
+    }
+    if (!changed && count === Object.keys(before).length) return before
+    root.memo.rects = out
     return out
   }
 
