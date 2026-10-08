@@ -134,7 +134,10 @@ PanelWindow {
   }
 
   // The screen swiped on decides when the overview starts to move.
-  onReadyChanged: if (surface.ready && (surface.leading || overlay.leadMonitor === "")) overlay.revealed()
+  onReadyChanged: {
+    if (surface.leading && overlay.service && surface.ready) overlay.service.perfMark("ready")
+    if (surface.ready && (surface.leading || overlay.leadMonitor === "")) overlay.revealed()
+  }
 
   Connections {
     target: overlay
@@ -145,7 +148,6 @@ PanelWindow {
   property var perfSwaps: []
   onVisibleChanged: if (surface.leading && overlay.service) overlay.service.perfMark(surface.visible ? "mapped" : "unmapped")
   onCapturedChanged: if (surface.leading && overlay.service && overlay.opened) overlay.service.perfMark("captured=" + surface.captured)
-  onReadyChanged: if (surface.leading && overlay.service && surface.ready) overlay.service.perfMark("ready")
   Connections {
     target: stage.Window.window
     function onFrameSwapped() {
