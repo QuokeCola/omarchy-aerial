@@ -48,8 +48,11 @@ Item {
   // again — or swap what three fingers sideways mean — on the way.
   property bool open: false
   onTChanged: {
+    const perfA = Date.now()
+    const was = service.open
     if (service.t > 0.995) service.open = true
     else if (service.t < 0.9) service.open = false
+    if (was !== service.open && service.perfT0) service.perfMark("open=" + service.open, Date.now() - perfA)
   }
 
   // Where the fingers have put the overview, which `t` chases. Decisions —
