@@ -20,7 +20,19 @@ PanelWindow {
   required property var screenInfo
 
   screen: surface.screenInfo
-  visible: overlay.opened
+  // Mapped for good rather than per swipe, empty and click-through while the
+  // overview is away. Mapping a layer surface is a round trip with the
+  // compositor, fresh buffers, and every texture the overview draws with
+  // allocated again: 60 to 100ms in which the fingers had moved and the
+  // overview had not, and then it jumped to catch up. Kept mapped, a swipe
+  // draws on the next frame.
+  //
+  // Except over a fullscreen window: a surface on top of one, even an empty
+  // one, stops the compositor scanning that window straight out, which is
+  // what a fullscreen video wants. There the overview maps when asked.
+  visible: overlay.opened || !surface.fullscreenHere
+  readonly property bool fullscreenHere: !!(surface.monitor && surface.monitor.activeWorkspace
+                                            && surface.monitor.activeWorkspace.hasFullscreen)
   color: "transparent"
   WlrLayershell.namespace: "omarchy-aerial"
   WlrLayershell.layer: WlrLayer.Overlay
@@ -440,6 +452,7 @@ PanelWindow {
   Item {
     id: stage
     anchors.fill: parent
+    visible: overlay.opened
     opacity: surface.ready ? 1 : 0
     focus: surface.leading
 
