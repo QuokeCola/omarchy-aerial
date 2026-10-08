@@ -130,12 +130,21 @@ PanelWindow {
   property bool ready: false
   readonly property bool canShow: overlay.opened && surface.captured
                                   && (overlay.wallpaper === "" || solid.status === Image.Ready)
-  onCanShowChanged: if (surface.canShow && !surface.ready) settleFrame.restart()
-
-  Timer {
-    id: settleFrame
-    interval: 24
-    onTriggered: if (surface.canShow) surface.ready = true
+  // The frame after everything is in, not a fixed wait: a capture asked for
+  // as the swipe began comes back with the compositor's next frame, and the
+  // surface is already mapped (see `visible`), so one presented frame is all
+  // there is to wait for — 8ms at 120Hz, where a timer guessed 24.
+  property bool settling: false
+  onCanShowChanged: if (surface.canShow && !surface.ready) {
+    surface.settling = true
+    stage.Window.window.update()
+  }
+  Connections {
+    target: surface.settling ? stage.Window.window : null
+    function onFrameSwapped() {
+      surface.settling = false
+      if (surface.canShow) surface.ready = true
+    }
   }
 
   Timer {
@@ -153,7 +162,11 @@ PanelWindow {
 
   Connections {
     target: overlay
-    function onOpenedChanged() { if (!overlay.opened) surface.ready = false }
+    function onOpenedChanged() {
+      if (overlay.opened) return
+      surface.ready = false
+      surface.settling = false
+    }
   }
 
   // ---- perf probe (temporary)
