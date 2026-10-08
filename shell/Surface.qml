@@ -131,18 +131,28 @@ PanelWindow {
   property bool ready: false
   readonly property bool canShow: overlay.opened && surface.captured
                                   && (overlay.wallpaper === "" || solid.status === Image.Ready)
-  // The frame after everything is in, not a fixed wait: a capture asked for
-  // as the swipe began comes back with the compositor's next frame, and the
-  // surface is already mapped (see `visible`), so one presented frame is all
-  // there is to wait for — 8ms at 120Hz, where a timer guessed 24.
+  // Counted in presented frames, not guessed with a timer. The cards still
+  // hold what their windows showed the last time the overview was up; the
+  // fresh frame asked for as the swipe began comes back two or three frames
+  // later. Shown sooner, a video or a busy terminal jumps back in time for
+  // those frames and then snaps to the present — at the start of a flick,
+  // with the cards already moving, that reads as the windows changing.
+  // Meanwhile the real windows are on screen, so nothing looks held up.
+  readonly property int settleFrames: 3
+  property int settled: 0
   property bool settling: false
   onCanShowChanged: if (surface.canShow && !surface.ready) {
+    surface.settled = 0
     surface.settling = true
     stage.Window.window.update()
   }
   Connections {
     target: surface.settling ? stage.Window.window : null
     function onFrameSwapped() {
+      if (++surface.settled < surface.settleFrames) {
+        stage.Window.window.update()
+        return
+      }
       surface.settling = false
       if (surface.canShow) surface.ready = true
     }
@@ -1263,7 +1273,10 @@ PanelWindow {
             // once they have a first frame: until then they are live anyway,
             // and asking a capture that has not started yet for a frame only
             // gets a warning back.
-            function onBeatChanged() { if ((card.shown || card.flying) && shot.hasContent) shot.captureFrame() }
+            function onBeatChanged() {
+              if (!shot.hasContent) return
+              if (card.shown || card.flying || (overlay.priming && Math.abs(card.lane) < 1.5)) shot.captureFrame()
+            }
           }
 
           // Coming into view does not wait for the next beat. Without this a

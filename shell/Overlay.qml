@@ -96,6 +96,16 @@ Scope {
   // keeps the overview at a few percent of a core instead of half of one.
   property int beat: 0
 
+  // A beat that also reaches the desktops either side of this one, as a slide
+  // begins: they come into view a moment later, and a card still showing what
+  // its window looked like last time is a window that visibly jumps.
+  property bool priming: false
+  function prime() {
+    root.priming = root.deskSliding || root.active
+    root.beat++
+    root.priming = false
+  }
+
   // And not at all while the overview is moving. Every capture that lands is
   // a texture upload and a redraw of everything over it, frosted glass
   // included, on frames that are already the busiest there are; a window
@@ -414,11 +424,11 @@ Scope {
       root.shot = next
       root.moved = ({})
     }
-    // And a fresh frame of each, now: the one they kept is from last time.
-    root.beat++
     root.workspaces = root.liveWorkspaces()
     root.plans = root.livePlans
     if (root.stageId <= 0 && Hyprland.focusedWorkspace) root.stageId = Hyprland.focusedWorkspace.id
+    // And a fresh frame of each, now: the one they kept is from last time.
+    root.prime()
 
     // Start on the window you were already using, so pressing enter straight
     // away puts you back rather than nowhere.
@@ -682,6 +692,7 @@ Scope {
       peeking.stop()
       root.peek = -1
       root.peekWanted = -1
+      root.prime()
       root.slideFrom = root.slide
       root.slideGoal = root.slide
       root.slideSpeed = 0
@@ -696,7 +707,7 @@ Scope {
     case "move":
       if (!root.sideOwned) return
       root.slideGoal = root.bounded(root.slideFrom + value)
-      slider.value = root.slideGoal
+      slider.chase(root.slideGoal, root.chaseSpeed)
       {
         const now = Date.now()
         const dt = (now - root.slideAt) / 1000
@@ -732,6 +743,10 @@ Scope {
   // still does. A flick back the other way always wins.
   // In workspaces per second, so it scales with how far a workspace is.
   readonly property real slideFlick: 1.2
+  // The fastest the spread follows the fingers sideways, in workspaces a
+  // second: an ordinary swipe is 2 to 5, a flick 30 and more. See
+  // Spring.chase.
+  readonly property real chaseSpeed: 7
   // Where the fingers have put the slide, and how fast it was moving on
   // screen, in workspaces per second.
   property real slideGoal: 0
@@ -758,7 +773,8 @@ Scope {
     if (!slider.running) slider.value = root.slide
     slider.stiffness = 52
     slider.damping = 2.0
-    slider.velocity = Math.max(-6, Math.min(6, velocity))
+    // Still catching up with a flick: on at the speed it is moving.
+    slider.velocity = Math.max(-6, Math.min(6, slider.lagging ? slider.velocity : velocity))
     // Running before the fingers are let go of, so the cards never see a
     // frame where neither is moving them.
     slider.follow(to)
