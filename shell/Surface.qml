@@ -20,7 +20,19 @@ PanelWindow {
   required property var screenInfo
 
   screen: surface.screenInfo
-  visible: overlay.opened
+  // Mapped for good rather than per swipe, empty and click-through while the
+  // overview is away. Mapping a layer surface is a round trip with the
+  // compositor, fresh buffers, and every texture the overview draws with
+  // allocated again: 60 to 100ms in which the fingers had moved and the
+  // overview had not, and then it jumped to catch up. Kept mapped, a swipe
+  // draws on the next frame.
+  //
+  // Except over a fullscreen window: a surface on top of one, even an empty
+  // one, stops the compositor scanning that window straight out, which is
+  // what a fullscreen video wants. There the overview maps when asked.
+  visible: overlay.opened || !surface.fullscreenHere
+  readonly property bool fullscreenHere: !!(surface.monitor && surface.monitor.activeWorkspace
+                                            && surface.monitor.activeWorkspace.hasFullscreen)
   color: "transparent"
   WlrLayershell.namespace: "omarchy-aerial"
   WlrLayershell.layer: WlrLayer.Overlay
@@ -55,8 +67,9 @@ PanelWindow {
   // Hyprland computes it, with its settings, so the glass does not change as
   // the window hands over to its card. See HyprBlur.qml.
   //
-  // Live: redrawn whenever what it covers changes, which during a swipe is
-  // every frame. A machine that struggles wants the `polish` branch.
+  // Blurred once as the overview opens for the tiled windows, which have only
+  // the wallpaper behind them, and live for floating ones and for a window
+  // being carried over the strip, whose backdrop moves with them.
   readonly property bool glass: overlay.deco.blur === true && overlay.frost
 
   // Corners follow Hyprland's decoration:rounding: each shape keeps its own
@@ -95,7 +108,7 @@ PanelWindow {
   function floatBlurFor(key) {
     const at = surface.floatStack.indexOf(key)
     const level = at >= 0 ? floatLevels.itemAt(at) : null
-    return level ? level.output : baseBlur.output
+    return level ? level.output : wallBlur.output
   }
 
   // The part of the screen windows live in: all of it, less what the bar and
@@ -118,12 +131,21 @@ PanelWindow {
   property bool ready: false
   readonly property bool canShow: overlay.opened && surface.captured
                                   && (overlay.wallpaper === "" || solid.status === Image.Ready)
-  onCanShowChanged: if (surface.canShow && !surface.ready) settleFrame.restart()
-
-  Timer {
-    id: settleFrame
-    interval: 24
-    onTriggered: if (surface.canShow) surface.ready = true
+  // The frame after everything is in, not a fixed wait: a capture asked for
+  // as the swipe began comes back with the compositor's next frame, and the
+  // surface is already mapped (see `visible`), so one presented frame is all
+  // there is to wait for — 8ms at 120Hz, where a timer guessed 24.
+  property bool settling: false
+  onCanShowChanged: if (surface.canShow && !surface.ready) {
+    surface.settling = true
+    stage.Window.window.update()
+  }
+  Connections {
+    target: surface.settling ? stage.Window.window : null
+    function onFrameSwapped() {
+      surface.settling = false
+      if (surface.canShow) surface.ready = true
+    }
   }
 
   Timer {
@@ -138,7 +160,11 @@ PanelWindow {
 
   Connections {
     target: overlay
-    function onOpenedChanged() { if (!overlay.opened) surface.ready = false }
+    function onOpenedChanged() {
+      if (overlay.opened) return
+      surface.ready = false
+      surface.settling = false
+    }
   }
 
   // Every card on screen has its first frame. Until then the desktop behind
@@ -232,7 +258,7 @@ PanelWindow {
   // openings (see `sync`), so the snapshot they were built from can be older
   // than the last time a window moved.
   readonly property var matching: surface.monitorWindows.filter(w => overlay.matches(w)).map(w => {
-    const now = overlay.geo[w.key]
+    const now = overlay.rects[w.key]
     return now ? Object.assign({}, w, { x: now.x, y: now.y, w: now.w, h: now.h }) : w
   })
 
@@ -396,6 +422,7 @@ PanelWindow {
   Item {
     id: stage
     anchors.fill: parent
+    visible: overlay.opened
     opacity: surface.ready ? 1 : 0
     focus: surface.leading
 
@@ -409,8 +436,8 @@ PanelWindow {
     //   tiledLayer  tiled windows' cards, which never overlap one another
     //   floatLayer  floating windows' cards, over all of it
     //
-    // Each card blurs what is behind it itself, redrawn whenever that changes
-    // — during a swipe, every frame. That is the price of this branch.
+    // Each card samples the blur of what is behind it: the wallpaper's, done
+    // once per opening, or a live one where what is behind it moves.
     Item {
       id: lower
       anchors.fill: parent
@@ -723,12 +750,51 @@ PanelWindow {
       }
     }
 
-    // Behind a tiled window: the desktop and the strip.
+    // Behind a tiled window, as the compositor has it: the wallpaper. Which
+    // does not change while the overview is up, so this is blurred once as it
+    // opens rather than on every frame of the swipe — the strip sliding in and
+    // the bar fading made `base` new each frame, and the whole chain ran again
+    // for a picture no card at rest is ever over.
+    Item {
+      id: backdrop
+      anchors.fill: parent
+
+      Image {
+        anchors.fill: parent
+        source: overlay.wallpaperUrl
+        visible: overlay.wallpaper !== ""
+        fillMode: wall.fillMode
+        sourceSize: wall.sourceSize
+        smooth: true
+        asynchronous: true
+        cache: true
+      }
+    }
+
+    HyprBlur {
+      id: wallBlur
+      anchors.fill: parent
+      sourceItem: backdrop
+      hideSource: true
+      live: surface.glass && overlay.opened
+      pixelSize: baseBlur.pixelSize
+      size: baseBlur.size
+      passes: baseBlur.passes
+      noise: baseBlur.noise
+      contrast: baseBlur.contrast
+      brightness: baseBlur.brightness
+      vibrancy: baseBlur.vibrancy
+      vibrancyDarkness: baseBlur.vibrancyDarkness
+    }
+
+    // The desktop and the strip, live: what a window carried over the strip
+    // has behind it. Only while one is.
+    readonly property bool overStrip: overlay.dragKey !== ""
     HyprBlur {
       id: baseBlur
       anchors.fill: parent
       sourceItem: base
-      live: surface.glass && overlay.opened
+      live: surface.glass && overlay.opened && stage.overStrip
       pixelSize: Qt.size(Math.round(surface.width * surface.hyprScale), Math.round(surface.height * surface.hyprScale))
       size: overlay.deco.blurSize * surface.blurScale
       passes: overlay.deco.blurPasses
@@ -1118,7 +1184,8 @@ PanelWindow {
           anchors.fill: parent
           visible: card.frostedGlass
           opacity: frame.opacity
-          property var source: card.floating ? surface.floatBlurFor(card.modelData.key) : baseBlur.output
+          property var source: card.floating ? surface.floatBlurFor(card.modelData.key)
+                             : (stage.overStrip ? baseBlur.output : wallBlur.output)
           // Where the card is on screen, scaled about its middle as it is
           // drawn, as a fraction of the screen.
           property vector4d area: {
@@ -1134,10 +1201,20 @@ PanelWindow {
           fragmentShader: Qt.resolvedUrl("blur/frost.frag.qsb")
         }
 
-        ClippingRectangle {
+        // Drawn as it is when its corners are square. Rounded, it goes
+        // through one layer and is cut to shape on the way out — not a
+        // ClippingRectangle, which keeps a second layer for the shape, and
+        // reallocates and redraws both on every frame a card changes size,
+        // which in a swipe is every frame, for every card.
+        Rectangle {
           id: frame
           anchors.fill: parent
-          radius: card.radius
+          layer.enabled: card.radius > 0.5
+          layer.effect: ShaderEffect {
+            property vector2d size: Qt.vector2d(frame.width, frame.height)
+            property real radius: card.radius
+            fragmentShader: Qt.resolvedUrl("deco/clip.frag.qsb")
+          }
           // As see-through as Hyprland draws the window, becoming solid.
           opacity: card.real.opacity + (1 - card.real.opacity) * overlay.dress
           // Under the capture, so a window whose first frame has not arrived
@@ -1152,6 +1229,14 @@ PanelWindow {
             id: shot
             anchors.fill: parent
             captureSource: card.modelData.capture
+            // Never quite opaque. A capture is drawn as an opaque texture —
+            // copied over what is behind it, alpha and all — and a terminal's
+            // see-through background then punches a hole through the
+            // overview to the real windows under it, rather than showing the
+            // frosted glass. Short of 1, Qt blends it like anything else. (The
+            // ClippingRectangle this used to sit in hid that by drawing it
+            // through a layer first.)
+            opacity: 0.999
             // Never live, not even for the window under the pointer. A live
             // capture is a texture that changes every frame, and one of those
             // makes the compositor redraw this whole surface sixty times a
@@ -1159,29 +1244,26 @@ PanelWindow {
             // than all eight captures put together. On the clock instead, they
             // still read as alive and the surface redraws a dozen times a
             // second rather than sixty.
-            // Except right at either end, where the card is about to hand over
-            // to the window itself (or has just taken over from it): there,
-            // a card a twelfth of a second stale is a visible tick as the
-            // real window replaces it. Live for those few frames only.
-            // Only on the way in or out of a swipe up or down, not while
-            // sliding between desktops at no zoom: live, every window on
-            // screen is captured every frame, which is exactly the load the
-            // clock exists to avoid, and the slide stutters under it.
+            // Not even at either end of a swipe, where the card hands over to
+            // its window: one fresh frame is asked for as the swipe begins
+            // and another as a closing card nears home (see `beat`), which is
+            // as current as live was, without capturing every window on
+            // screen on every frame of the swipe.
             //
-            // And until its first frame is in: a card waits for its capture
-            // before the overview can appear, and waiting for the clock to
-            // come round was most of the wait. Live, the first frame arrives
-            // as soon as the compositor can give it.
-            live: card.shown && overlay.opened
-                  && (!shot.hasContent
-                      || (!overlay.deskSliding && overlay.t > 0.0005 && overlay.t < 0.15))
+            // Live only until its first frame is in: a card waits for its
+            // capture before the overview can appear, and live, the first
+            // frame arrives as soon as the compositor can give it.
+            live: card.shown && overlay.opened && !shot.hasContent
           }
 
           Connections {
             target: overlay
             // Only the cards you can actually see are worth a frame; the rest
-            // are kept alive purely so that showing them is instant.
-            function onBeatChanged() { if (card.shown || card.flying) shot.captureFrame() }
+            // are kept alive purely so that showing them is instant. And only
+            // once they have a first frame: until then they are live anyway,
+            // and asking a capture that has not started yet for a frame only
+            // gets a warning back.
+            function onBeatChanged() { if ((card.shown || card.flying) && shot.hasContent) shot.captureFrame() }
           }
 
           // Coming into view does not wait for the next beat. Without this a
@@ -1189,7 +1271,7 @@ PanelWindow {
           // clock comes round, which is the blank tile people saw.
           Connections {
             target: card
-            function onShownChanged() { if (card.shown) shot.captureFrame() }
+            function onShownChanged() { if (card.shown && shot.hasContent) shot.captureFrame() }
           }
         }
 
