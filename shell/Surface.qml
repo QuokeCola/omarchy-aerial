@@ -204,7 +204,8 @@ PanelWindow {
       // rest redraws only when a capture lands.
       const s = raw.map(Math.abs)
       const gaps = []
-      for (let i = 1; i < raw.length; i++) if (raw[i] > 0 && raw[i - 1] > 0) gaps.push(s[i] - s[i - 1])
+      const at = []
+      for (let i = 1; i < raw.length; i++) if (raw[i] > 0 && raw[i - 1] > 0) { gaps.push(s[i] - s[i - 1]); at.push(s[i - 1]) }
       const sorted = gaps.slice().sort((a, b) => a - b)
       const pct = q => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] : 0
       const mean = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 0
@@ -212,7 +213,7 @@ PanelWindow {
       console.info("aerial-perf swaps n=" + s.length + " first=" + (s[0] || -1) + " span=" + (s.length ? s[s.length - 1] - s[0] : 0)
                    + " mean=" + mean.toFixed(1) + " p50=" + pct(0.5) + " p95=" + pct(0.95) + " max=" + (sorted[sorted.length - 1] || 0)
                    + " >12=" + gaps.filter(g => g > 12).length + " >25=" + gaps.filter(g => g > 25).length
-                   + " big=" + gaps.filter(g => g > 25).join(","))
+                   + " big=" + gaps.map((g, i) => g > 25 ? at[i] + ":" + g : "").filter(x => x).join(","))
       svc.perfT0 = 0
     }
   }
