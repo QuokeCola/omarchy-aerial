@@ -4,6 +4,7 @@ import Quickshell.Wayland
 import Quickshell.Hyprland
 import Quickshell.Widgets
 import qs.Commons
+import qs.Commons as Commons
 import "../app/Layout.js" as Layout
 
 // One screen's worth of overview.
@@ -353,7 +354,7 @@ PanelWindow {
             color: "transparent"
             border.width: space.targeted || space.focused || space.peeked ? 2 : 1
             border.color: space.targeted ? "#F2EFE7"
-                        : space.focused ? Color.accent
+                        : space.focused ? Commons.Color.accent
                         : space.peeked ? Qt.rgba(1, 1, 1, 0.5)
                         : Qt.rgba(1, 1, 1, 0.14)
           }
@@ -498,7 +499,7 @@ PanelWindow {
           radius: card.radius
           color: "transparent"
           border.width: card.landing ? 3 : (card.picked ? 3 : 1)
-          border.color: card.landing ? "#F2EFE7" : (card.picked ? Color.accent : Qt.rgba(1, 1, 1, 0.14))
+          border.color: card.landing ? "#F2EFE7" : (card.picked ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.14))
           opacity: overlay.veil
         }
 
