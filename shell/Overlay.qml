@@ -272,12 +272,20 @@ Scope {
         || String(win.appId || "").toLowerCase().indexOf(needle) >= 0
   }
 
-  /** The icon an app id resolves to, or "". */
+  /**
+   * The icon an app id resolves to, or "". Only a plain icon-theme name is looked up: the window class is chosen by
+   * the app itself, and an absolute path there (or in a desktop entry found by it) would hand the shell's image
+   * decoder whatever file that app likes. Anything else gets the generic icon.
+   */
+  function iconName(name) {
+    return typeof name === "string" && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(name) ? name : ""
+  }
+
   function iconFor(appId) {
     if (!appId) return ""
     const entry = DesktopEntries.heuristicLookup(appId)
-    const name = entry && entry.icon ? entry.icon : appId
-    return Quickshell.iconPath(name, true) || ""
+    const name = root.iconName(entry && entry.icon ? entry.icon : appId)
+    return name ? (Quickshell.iconPath(name, true) || "") : ""
   }
 
   // ------------------------------------------------------------ acting on it
