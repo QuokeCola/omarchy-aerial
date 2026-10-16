@@ -53,6 +53,17 @@ PanelWindow {
   readonly property string monitorName: surface.screenInfo ? surface.screenInfo.name : ""
   readonly property var monitor: (Hyprland.monitors.values || []).find(m => m.name === surface.monitorName) || null
   readonly property bool leading: surface.monitorName === overlay.leadMonitor
+  // Showing what the screen swiped on shows — the same desktop, peeked at or
+  // slid to with it — rather than only its own: the leading screen, or every
+  // screen when they are one desktop.
+  readonly property bool following: surface.leading || overlay.synced
+
+  /** This screen's workspace for a desktop in the strip. */
+  function spaceHere(desk) { return overlay.spaceOn(desk, surface.monitorName) }
+
+  // The desktop this screen is on, as Hyprland has it.
+  readonly property int ownDesk: surface.monitor && surface.monitor.activeWorkspace
+                                 ? overlay.deskOfId(surface.monitor.activeWorkspace.id) : -1
 
   // How soft the wallpaper behind the spread is, 0 to 1. At 0 it is the
   // wallpaper itself, sharp, exactly as the desktop shows it.
@@ -208,18 +219,17 @@ PanelWindow {
   // Which workspace this screen is showing. Peeking at a tile swaps it without
   // going there.
   readonly property int shownWorkspace: {
-    if (surface.leading && overlay.peek > 0) return overlay.peek
-    if (surface.leading && overlay.stageWorkspace > 0) return overlay.stageWorkspace
-    return surface.monitor && surface.monitor.activeWorkspace ? surface.monitor.activeWorkspace.id : -1
+    if (surface.following && overlay.peek > 0) return overlay.peek
+    if (surface.following && overlay.stageWorkspace > 0) return overlay.stageWorkspace
+    return surface.ownDesk
   }
 
   // The desktop this screen's strip marks as current.
-  readonly property int ringWorkspace: surface.leading ? overlay.stageWorkspace
-    : (surface.monitor && surface.monitor.activeWorkspace ? surface.monitor.activeWorkspace.id : -1)
+  readonly property int ringWorkspace: surface.following ? overlay.stageWorkspace : surface.ownDesk
 
   // Sliding between workspaces moves every desktop's spread sideways together,
   // so this screen is a window onto a row of them.
-  readonly property bool sliding: surface.leading && overlay.moving
+  readonly property bool sliding: surface.following && overlay.moving
                                   && !overlay.everything && !surface.searching
 
   // Every window on this screen, whichever desktop it is on. This is what the
@@ -305,13 +315,13 @@ PanelWindow {
     const ty = surface.tileTop
     const tw = surface.tileWidth
     const th = surface.tileHeight
-    const plan = (overlay.livePlans[spaceId] || []).find(p => p.key === key)
+    const plan = (overlay.livePlans[surface.spaceHere(spaceId)] || []).find(p => p.key === key)
     if (plan) return Qt.rect(tx + plan.x * tw, ty + plan.y * th, Math.max(3, plan.w * tw), Math.max(3, plan.h * th))
     const sw = Math.max(1, surface.width)
     const sh = Math.max(1, surface.height)
     if (floating && real && real.w > 0)
       return Qt.rect(tx + real.x / sw * tw, ty + real.y / sh * th, Math.max(3, real.w / sw * tw), Math.max(3, real.h / sh * th))
-    const others = (overlay.livePlans[spaceId] || []).filter(p => p.key !== key)
+    const others = (overlay.livePlans[surface.spaceHere(spaceId)] || []).filter(p => p.key !== key)
     if (others.length === 0) {
       // Alone there, it will fill the desktop: the work area, less the gaps
       // Hyprland leaves around it.
@@ -577,7 +587,7 @@ PanelWindow {
               readonly property bool peeked: overlay.peek === space.modelData.id
               // Live while open, so a window dropped here shows up where
               // Hyprland actually puts it, and the others make room.
-              readonly property var plan: (overlay.opened ? overlay.livePlans : overlay.plans)[space.modelData.id] || []
+              readonly property var plan: (overlay.opened ? overlay.livePlans : overlay.plans)[surface.spaceHere(space.modelData.id)] || []
 
               x: surface.tileX(space.index)
               y: surface.tileTop
@@ -703,8 +713,8 @@ PanelWindow {
           // a screen that is not leading, the desktop that screen shows.
           Rectangle {
             readonly property int tile: overlay.workspaces.findIndex(w => w.id === surface.ringWorkspace)
-            visible: surface.leading ? overlay.stageIndex >= 0 : tile >= 0
-            x: surface.leading ? surface.tileX(Math.max(0, overlay.laneTile(overlay.stageIndex + overlay.slide)))
+            visible: surface.following ? overlay.stageIndex >= 0 : tile >= 0
+            x: surface.following ? surface.tileX(Math.max(0, overlay.laneTile(overlay.stageIndex + overlay.slide)))
                                : surface.tileX(Math.max(0, tile))
             y: surface.tileTop
             width: surface.tileWidth
@@ -916,7 +926,7 @@ PanelWindow {
                                      || (surface.sliding ? Math.abs(card.lane) < 1
                                                          : overlay.wsOf(card.modelData) === surface.shownWorkspace)
         // How many screens over this card's desktop is while sliding.
-        readonly property real lane: surface.leading ? overlay.laneOf(overlay.wsOf(card.modelData)) : 0
+        readonly property real lane: surface.following ? overlay.laneOf(overlay.wsOf(card.modelData)) : 0
         readonly property real shift: surface.sliding ? card.lane * surface.width : 0
         readonly property bool shown: card.here && overlay.matches(card.modelData)
         readonly property bool hovered: hover.hovered && overlay.active
@@ -967,7 +977,7 @@ PanelWindow {
         // than landing a different size from the one carried over.
         readonly property real tileScale: {
           const target = overlay.dragTarget
-          const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+          const here = overlay.synced ? overlay.wsOf(card.modelData) : overlay.focusedDesk
           if (!(target > 0) || target === here || card.width <= 0 || card.height <= 0) return 0.4
           const r = surface.landingRect(card.modelData.key, target, card.real, card.floating)
           return Math.max(0.05, Math.min(r.width / card.width, r.height / card.height))
@@ -1343,7 +1353,7 @@ PanelWindow {
               card.centering = 0
               centeringOn.restart()
             } else {
-              const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+              const here = overlay.synced ? overlay.wsOf(card.modelData) : overlay.focusedDesk
               if (overlay.dragTarget > 0 && overlay.dragTarget !== here) {
                 card.flyAway()
               } else {
@@ -1472,7 +1482,7 @@ PanelWindow {
     // Says so, and slides with the rest, so a desktop with nothing on it
     // arrives as a place rather than as a gap.
     Repeater {
-      model: surface.leading ? overlay.lanes : []
+      model: surface.following ? overlay.lanes : []
 
       delegate: Text {
         id: nothing

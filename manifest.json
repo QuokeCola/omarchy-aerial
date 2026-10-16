@@ -35,7 +35,8 @@
     "defaultSection": "right",
     "defaults": {
       "frost": true,
-      "deskSwipe": true
+      "deskSwipe": true,
+      "syncScreens": false
     }
   }
 }

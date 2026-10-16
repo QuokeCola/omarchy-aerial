@@ -75,6 +75,66 @@ Scope {
   readonly property bool everything: root.service ? root.service.everything : false
   readonly property string leadMonitor: root.service ? root.service.monitorName : ""
 
+  // ------------------------------------------------- every screen as one desktop
+
+  // With "All screens together" on, each screen keeps a block of ten
+  // workspaces — the laptop's own panel 1-10, the others left to right 11-20,
+  // 21-30 — and a desktop is the same number in every block: desktop 3 is
+  // workspace 3 on the laptop, 13 on the screen left of the rest, 23 on the
+  // next. The overview thinks in desktops (the strip, the slide, `wsOf`) and
+  // turns one into a workspace only to talk to Hyprland. The SUPER+number
+  // bindings that switch every screen at once number them the same way.
+  readonly property bool synced: root.service ? root.service.syncScreens : false
+
+  readonly property var screenOrder: (Hyprland.monitors.values || [])
+    .map(m => ({ name: m.name, x: m.x, laptop: /^eDP/.test(m.name) }))
+    .sort((a, b) => a.laptop !== b.laptop ? (a.laptop ? -1 : 1) : a.x - b.x)
+    .map(m => m.name)
+
+  /** The desktop a workspace id is, or the id itself when screens are apart. */
+  function deskOfId(id) { return root.synced && id > 0 ? (id - 1) % 10 + 1 : id }
+
+  /** The workspace that is a desktop on a given screen. */
+  function spaceOn(desk, monitorName) {
+    if (!root.synced || desk <= 0) return desk
+    return desk + 10 * Math.max(0, root.screenOrder.indexOf(monitorName))
+  }
+
+  readonly property int focusedDesk: Hyprland.focusedWorkspace ? root.deskOfId(Hyprland.focusedWorkspace.id) : -1
+
+  // Every screen to a desktop in one go, the screen you are on last so that it
+  // keeps focus — and then, if asked, to a window on it. Pointer warps are off
+  // for the trip, as in `focusQuietly`: focusing each screen in turn would
+  // otherwise drag the pointer across all of them.
+  property var deskWanted: null
+  Process {
+    id: deskSwitch
+    onRunningChanged: if (!running && root.deskWanted) {
+      const next = root.deskWanted
+      root.deskWanted = null
+      root.switchDesk(next.desk, next.window)
+    }
+  }
+  function switchDesk(desk, address) {
+    if (deskSwitch.running) {
+      root.deskWanted = { desk: desk, window: address || "" }
+      return
+    }
+    const lead = root.leadMonitor !== "" ? root.leadMonitor
+               : (Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : "")
+    const names = root.screenOrder.filter(n => n !== lead)
+    if (lead !== "") names.push(lead)
+    let lua = "local w = hl.get_config('cursor.no_warps'); hl.config({ cursor = { no_warps = true } }); "
+    for (const name of names) {
+      lua += "hl.dispatch(hl.dsp.focus({ monitor = '" + name + "' })); "
+           + "hl.dispatch(hl.dsp.focus({ workspace = '" + root.spaceOn(desk, name) + "', on_current_monitor = true })); "
+    }
+    if (address) lua += "hl.dispatch(hl.dsp.focus({ window = 'address:0x" + address + "' })); "
+    lua += "hl.config({ cursor = { no_warps = w } })"
+    deskSwitch.command = ["/usr/bin/hyprctl", "eval", lua]
+    deskSwitch.running = true
+  }
+
   // The real windows stay mapped underneath, so the veil is what hides them. It
   // ramps faster than `t`: by the time a thumbnail has visibly moved off its
   // window, the window it came from is already gone.
@@ -276,25 +336,28 @@ Scope {
     // exist are not the ones you can use. Always offer the first five — the
     // rule the bar follows too — plus any other that exists, so there is
     // somewhere to drag a window to before you have ever been there.
+    // With every screen as one desktop, the strip is of desktops: each is
+    // somewhere on every screen, and there if any screen has been there.
     const ids = [1, 2, 3, 4, 5]
     const existing = Hyprland.workspaces.values || []
     for (const space of existing) {
-      if (space.id > 0 && space.id <= 10 && ids.indexOf(space.id) === -1) ids.push(space.id)
+      const id = root.deskOfId(space.id)
+      if (id > 0 && id <= 10 && (root.synced || space.id <= 10) && ids.indexOf(id) === -1) ids.push(id)
     }
     ids.sort((a, b) => a - b)
 
-    const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+    const here = root.focusedDesk
     const out = ids.map(id => {
-      const real = existing.find(w => w.id === id) || null
+      const real = existing.find(w => w.id > 0 && root.deskOfId(w.id) === id) || null
       return {
         id: id,
-        name: real && real.name ? real.name : String(id),
+        name: !root.synced && real && real.name ? real.name : String(id),
         focused: id === here,
         real: real !== null,
         fresh: false,
         // Which screen it is on, if it exists yet. One that does not will be
-        // made on whichever screen switches to it.
-        monitor: real && real.monitor ? real.monitor.name : "",
+        // made on whichever screen switches to it. A desktop is on all of them.
+        monitor: !root.synced && real && real.monitor ? real.monitor.name : "",
       }
     })
 
@@ -378,7 +441,7 @@ Scope {
     for (const y of b) byKey[y.key] = y
     for (const x of a) {
       const y = byKey[x.key]
-      if (!y || root.wsOf(x) !== y.workspace || x.monitor !== y.monitor || x.floating !== y.floating)
+      if (!y || root.spaceOf(x) !== y.workspace || x.monitor !== y.monitor || x.floating !== y.floating)
         return false
     }
     return true
@@ -391,11 +454,15 @@ Scope {
   // here instead, and everything asks `wsOf` where a window is.
   property var moved: ({})
 
-  /** The desktop a window is on, as far as the overview is concerned. */
-  function wsOf(win) {
+  /** The workspace a window is on, as far as the overview is concerned. */
+  function spaceOf(win) {
     const to = root.moved[win.key]
     return to !== undefined ? to : win.workspace
   }
+
+  /** The desktop a window is on: its workspace, or with every screen as one
+      desktop, the desktop that workspace is part of. */
+  function wsOf(win) { return root.deskOfId(root.spaceOf(win)) }
 
   // How Hyprland stacks windows, by address: 0 at the bottom. Focus does not
   // raise a floating window in Hyprland, so the focus history is not the
@@ -426,7 +493,7 @@ Scope {
     }
     root.workspaces = root.liveWorkspaces()
     root.plans = root.livePlans
-    if (root.stageId <= 0 && Hyprland.focusedWorkspace) root.stageId = Hyprland.focusedWorkspace.id
+    if (root.stageId <= 0 && root.focusedDesk > 0) root.stageId = root.focusedDesk
     // And a fresh frame of each, now: the one they kept is from last time.
     root.prime()
 
@@ -561,8 +628,7 @@ Scope {
   // moved by sliding, rather than read from the compositor, because the
   // compositor only hears about a switch after the slide has shown it.
   property int stageId: -1
-  readonly property int stageWorkspace: root.stageId > 0 ? root.stageId
-                                      : (Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1)
+  readonly property int stageWorkspace: root.stageId > 0 ? root.stageId : root.focusedDesk
 
   // The workspaces you can slide through: the strip, less the "+" at its end.
   //
@@ -626,7 +692,7 @@ Scope {
     if (!root.service || !root.service.deskSlide) return
     // Not until the compositor is on the desktop the slide landed on, or for a
     // frame the old one shows through as the overview goes.
-    const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+    const here = root.focusedDesk
     if (root.stageId > 0 && here !== root.stageId) {
       switchWait.restart()
       return
@@ -806,7 +872,8 @@ Scope {
         // it. Told at the lift, the compositor switched at once — and on a
         // short swipe the overview was not up yet, so the desktop simply
         // vanished before the slide it was meant to be hidden behind.
-        Hyprland.dispatch('hl.dsp.focus({ workspace = "' + next + '" })')
+        if (root.synced) root.switchDesk(next)
+        else Hyprland.dispatch('hl.dsp.focus({ workspace = "' + next + '" })')
         root.stageId = next
         // The selection moves to the desktop you are looking at, so enter
         // goes somewhere on it.
@@ -868,13 +935,20 @@ Scope {
     const win = root.shot.find(w => w.key === address)
     if (win) root.stageId = root.wsOf(win)
     root.peek = -1
-    Hyprland.dispatch('hl.dsp.focus({ window = "address:0x' + address + '" })')
+    // Every screen to that window's desktop, not just the one it is on.
+    if (root.synced && win) root.switchDesk(root.wsOf(win), address)
+    else Hyprland.dispatch('hl.dsp.focus({ window = "address:0x' + address + '" })')
     root.dismiss()
   }
 
   function goToWorkspace(id, monitorName) {
     root.stageId = id
     root.peek = -1
+    if (root.synced) {
+      root.switchDesk(id)
+      root.dismiss()
+      return
+    }
     // A desktop that does not exist yet is made on whichever screen has
     // focus: the one whose tile was clicked, then.
     const exists = (Hyprland.workspaces.values || []).some(w => w.id === id)
@@ -896,7 +970,7 @@ Scope {
     root.peek = -1
     root.peekWanted = -1
     root.noPeekId = -1
-    root.stageId = mon && mon.activeWorkspace ? mon.activeWorkspace.id : -1
+    root.stageId = mon && mon.activeWorkspace ? root.deskOfId(mon.activeWorkspace.id) : -1
     root.service.monitorName = name
   }
 
@@ -959,20 +1033,24 @@ Scope {
     root.dropOnKey = ""
     if (!address) return
 
-    const here = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+    // With every screen as one desktop, a tile is that desktop on the screen
+    // the window is on: dropped there, it changes desktop, not screen.
+    const win = root.shot.find(w => w.key === address)
+    const here = root.synced && win ? root.wsOf(win) : root.focusedDesk
+    const target = root.synced && win ? root.spaceOn(space, win.monitor) : space
     if (space > 0 && space !== here) {
       // Without following it: moving a window takes the screen to its new
       // desktop by default, which switched the real desktop underneath the
       // overview — flashing as it went, and handing back to the wrong desktop
       // when the overview closed.
       Hyprland.dispatch('hl.dsp.window.move({ window = "address:0x' + address
-                        + '", workspace = "' + space + '", follow = false })')
+                        + '", workspace = "' + target + '", follow = false })')
       root.noPeekId = space
       // Nothing left selected on this desktop that has gone to another.
       if (root.selectedKey === address) root.selectedKey = ""
       // Gone from this desktop now, not when the compositor has said so.
       const next = Object.assign({}, root.moved)
-      next[address] = space
+      next[address] = target
       root.moved = next
     } else if (onto && onto !== address) {
       // Dropped on another window: they trade places in the tiling layout.

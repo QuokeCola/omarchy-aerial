@@ -417,6 +417,11 @@ Item {
   // the settings panel; it costs GPU time while the overview is up.
   property bool frost: true
 
+  // Every screen is one desktop: sliding, or picking one from the strip,
+  // switches all of them together. See `synced` in the overlay. Set from the
+  // settings panel.
+  property bool syncScreens: false
+
   // ---------------------------------------------------------- recording keys
 
   // The settings panel is listening for a shortcut: Hyprland's bindings are

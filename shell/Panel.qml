@@ -7,8 +7,8 @@ import "../app/Shortcuts.js" as Shortcuts
 
 // Aerial's settings, from a button on the bar.
 //
-// Two switches that take effect at once — frosted glass, and swiping between
-// desktops — and Aerial's keyboard shortcuts, which are Hyprland bindings and
+// Three switches that take effect at once — frosted glass, swiping between
+// desktops, and every screen switching desktop together — and Aerial's keyboard shortcuts, which are Hyprland bindings and
 // so live in the user's Omarchy bindings file, in a section of their own (see
 // app/Shortcuts.js). Shortcuts are edited here and only written on Save.
 Panel {
@@ -26,6 +26,7 @@ Panel {
 
   readonly property bool frost: root.setting("frost", true) !== false
   readonly property bool deskSwipe: root.setting("deskSwipe", true) !== false
+  readonly property bool syncScreens: root.setting("syncScreens", false) === true
 
   function setSetting(key, value) {
     const next = Object.assign({}, root.settings || {})
@@ -41,10 +42,12 @@ Panel {
     if (!root.service) return
     root.service.frost = root.frost
     root.service.deskSwipe = root.deskSwipe
+    root.service.syncScreens = root.syncScreens
   }
   onServiceChanged: root.pushSettings()
   onFrostChanged: root.pushSettings()
   onDeskSwipeChanged: root.pushSettings()
+  onSyncScreensChanged: root.pushSettings()
 
   Timer {
     // The service can load after the bar; look again until it is there.
@@ -334,6 +337,16 @@ Panel {
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
           onClicked: root.setSetting("deskSwipe", !root.deskSwipe)
+        }
+
+        Toggle {
+          width: parent.width
+          label: "All screens together"
+          description: "Every screen switches desktop at once: the laptop's own on 1-10, the rest left to right on 11-20, 21-30."
+          checked: root.syncScreens
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          onClicked: root.setSetting("syncScreens", !root.syncScreens)
         }
 
         PanelSeparator { width: parent.width; foreground: root.bar.foreground }
