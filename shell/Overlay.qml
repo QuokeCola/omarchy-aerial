@@ -107,12 +107,22 @@ Scope {
   // for the trip, as in `focusQuietly`: focusing each screen in turn would
   // otherwise drag the pointer across all of them.
   property var deskWanted: null
+  // Running, and a moment after: the focus changes it causes can reach here
+  // after hyprctl has already returned.
+  readonly property bool deskSwitching: deskSwitch.running || deskSwitchTail.running
+  Timer {
+    id: deskSwitchTail
+    interval: 300
+  }
   Process {
     id: deskSwitch
-    onRunningChanged: if (!running && root.deskWanted) {
-      const next = root.deskWanted
-      root.deskWanted = null
-      root.switchDesk(next.desk, next.window)
+    onRunningChanged: if (!running) {
+      deskSwitchTail.restart()
+      if (root.deskWanted) {
+        const next = root.deskWanted
+        root.deskWanted = null
+        root.switchDesk(next.desk, next.window)
+      }
     }
   }
   function switchDesk(desk, address) {
@@ -970,7 +980,9 @@ Scope {
     root.peek = -1
     root.peekWanted = -1
     root.noPeekId = -1
-    root.stageId = mon && mon.activeWorkspace ? root.deskOfId(mon.activeWorkspace.id) : -1
+    // One desktop across every screen: changing screens does not change it.
+    if (!root.synced || root.stageId <= 0)
+      root.stageId = mon && mon.activeWorkspace ? root.deskOfId(mon.activeWorkspace.id) : -1
     root.service.monitorName = name
   }
 
@@ -979,6 +991,10 @@ Scope {
   Connections {
     target: Hyprland
     function onFocusedMonitorChanged() {
+      // Not while `switchDesk` is walking focus across every screen: that is
+      // not the pointer going anywhere, and following it handed the lead to
+      // each screen in turn, still on the desktop it was leaving.
+      if (root.deskSwitching) return
       if (root.active && Hyprland.focusedMonitor) root.leadTo(Hyprland.focusedMonitor.name)
     }
   }
