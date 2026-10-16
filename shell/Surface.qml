@@ -1003,9 +1003,17 @@ PanelWindow {
         property real fly: 0
         property bool released: false
         readonly property bool flying: card.leftAway && !card.here && surface.leading
-        readonly property rect flyTo: card.leftAway
-          ? surface.landingRect(card.modelData.key, overlay.wsOf(card.modelData), card.real, card.floating)
-          : Qt.rect(0, 0, 0, 0)
+        // In the tile, and so wherever the tile is: as the overview closes the
+        // strip slides up out of sight, and a card left where the tile used to
+        // be hung there on its own until the overview had gone.
+        readonly property rect flyTo: {
+          if (!card.leftAway) return Qt.rect(0, 0, 0, 0)
+          const r = surface.landingRect(card.modelData.key, overlay.wsOf(card.modelData), card.real, card.floating)
+          return Qt.rect(r.x, r.y - surface.stripHeight * (1 - overlay.veil), r.width, r.height)
+        }
+        // Sent to another desktop and not on its way back: never seen again
+        // where its window was, even for the moment its flight ends.
+        readonly property bool parked: card.leftAway && !card.here
 
         NumberAnimation {
           id: flight
@@ -1131,7 +1139,9 @@ PanelWindow {
         Behavior on scale { enabled: !card.flying; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
         // Sliding carries a desktop off the screen rather than fading it: one
         // that is still dissolving as it goes reads as lag.
-        Behavior on opacity { enabled: !surface.sliding; NumberAnimation { duration: 150 } }
+        // Nor a card parked in a tile when its flight ends: faded from where
+        // it stood, it showed the window back on its old desktop for a moment.
+        Behavior on opacity { enabled: !surface.sliding && !card.parked; NumberAnimation { duration: 150 } }
 
         // Hyprland's rounding on the desktop, the overview's own once spread,
         // never rounder than Hyprland's.

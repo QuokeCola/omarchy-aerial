@@ -999,6 +999,13 @@ Scope {
     }
   }
 
+  // The pointer can reach another screen while the overview is still on its
+  // way up, when the move above does not count. Once open, catch up: only the
+  // leading screen takes the keyboard, and Hyprland gives the pointer to no
+  // other surface while one has it exclusively, so the screen you went to
+  // ignored the pointer altogether.
+  onActiveChanged: if (root.active && Hyprland.focusedMonitor) root.leadTo(Hyprland.focusedMonitor.name)
+
   /** Pointing at a window focuses it, so the overview closes onto the window
       you were last looking at — but only one on the desktop its screen is
       showing: focusing a window elsewhere would switch that screen's desktop
