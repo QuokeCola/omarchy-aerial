@@ -219,11 +219,23 @@ Item {
     return url.startsWith("file://") ? url.slice(7) : url
   }
 
+  // Asked to register again while an eval was still in flight. At login a
+  // monitor daemon reloads Hyprland while the first eval waits on a modeset;
+  // dropping the second ask left the reloaded Lua state with no gestures.
+  property bool registerAgain: false
+
   Process {
     id: lua
+    // A failed eval (Hyprland not answering yet) registered nothing: try again.
+    onExited: (code) => { if (code !== 0) rearm.restart() }
     // Registering the gestures resets nothing sideways, but a fresh Lua state
     // after a config reload has nothing registered at all: say it again.
     onRunningChanged: if (!running) {
+      if (service.registerAgain) {
+        service.registerAgain = false
+        service.registerGesture()
+        return
+      }
       service.sidewaysSent = ""
       service.sendSideways()
     }
@@ -394,6 +406,10 @@ Item {
   }
 
   function registerGesture() {
+    if (lua.running) {
+      service.registerAgain = true
+      return
+    }
     const path = service.gestureFile.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
     lua.command = ["/usr/bin/hyprctl", "eval", 'dofile("' + path + '")']
     lua.running = true
