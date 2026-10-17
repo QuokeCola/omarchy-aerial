@@ -573,6 +573,18 @@ PanelWindow {
           y: -height * (1 - overlay.veil)
           opacity: overlay.veil
 
+          // The strip is centred, so a desktop added at its end moves every
+          // tile half a tile over: started where they were, and eased there.
+          transform: Translate { id: stripNudge }
+          NumberAnimation { id: nudging; target: stripNudge; property: "x"; to: 0; duration: 320; easing.type: Easing.OutCubic }
+          Connections {
+            target: overlay
+            function onDeskAdded(id, grew) {
+              stripNudge.x = grew * (surface.tileWidth + surface.tileGap) / 2
+              nudging.restart()
+            }
+          }
+
           Repeater {
             model: overlay.workspaces
 
@@ -596,6 +608,28 @@ PanelWindow {
 
               scale: space.targeted ? 1.12 : (space.peeked ? 1.06 : 1)
               Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
+
+              // A desktop just added from "+" drops in from above the strip,
+              // and the next "+" fades in behind it.
+              transform: Translate { id: arrival }
+              SequentialAnimation {
+                id: dropIn
+                ParallelAnimation {
+                  NumberAnimation { target: arrival; property: "y"; from: -(surface.tileTop + surface.tileHeight); to: 0; duration: 420; easing.type: Easing.OutBack; easing.overshoot: 1.2 }
+                  NumberAnimation { target: space; property: "opacity"; from: 0; to: 1; duration: 220 }
+                }
+              }
+              SequentialAnimation {
+                id: fadeIn
+                PropertyAction { target: space; property: "opacity"; value: 0 }
+                PauseAnimation { duration: 180 }
+                NumberAnimation { target: space; property: "opacity"; to: 1; duration: 240 }
+              }
+              Component.onCompleted: {
+                if (overlay.justAdded <= 0) return
+                if (space.modelData.id === overlay.justAdded) dropIn.start()
+                else if (space.modelData.fresh) fadeIn.start()
+              }
 
               ClippingRectangle {
                 id: tile
@@ -1546,4 +1580,5 @@ PanelWindow {
       }
     }
   }
+
 }

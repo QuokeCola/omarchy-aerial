@@ -350,6 +350,7 @@ Scope {
     // With every screen as one desktop, the strip is of desktops: each is
     // somewhere on every screen, and there if any screen has been there.
     const ids = [1, 2, 3, 4, 5]
+    for (const id of root.addedDesks) if (ids.indexOf(id) === -1) ids.push(id)
     const existing = Hyprland.workspaces.values || []
     for (const space of existing) {
       const id = root.deskOfId(space.id)
@@ -998,7 +999,33 @@ Scope {
     root.dismiss()
   }
 
+  // Desktops added from the strip's "+" that nothing is on yet. Hyprland
+  // only keeps a workspace with something on it, so they are the overview's
+  // to remember: there to drag a window to, or slide to, until then.
+  property var addedDesks: []
+  // The one just added, for the strip to drop its tile in, and how many tiles
+  // longer the strip got (none once "+" has run out at 10).
+  property int justAdded: -1
+  signal deskAdded(int id, int grew)
+  Timer { id: addedSettle; interval: 700; onTriggered: root.justAdded = -1 }
+
+  function addWorkspace(id) {
+    if (id <= 0 || id > 10 || root.addedDesks.indexOf(id) !== -1) return
+    const before = root.workspaces.length
+    root.addedDesks = root.addedDesks.concat([id])
+    root.justAdded = id
+    addedSettle.restart()
+    root.workspaces = root.liveWorkspaces()
+    root.deskAdded(id, root.workspaces.length - before)
+  }
+
   function goToWorkspace(id, monitorName) {
+    // The "+" at the end makes another desktop and stays in the overview.
+    const tile = root.workspaces.find(w => w.id === id)
+    if (tile && tile.fresh) {
+      root.addWorkspace(id)
+      return
+    }
     root.stageId = id
     root.peek = -1
     if (root.synced) {
