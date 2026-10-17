@@ -542,6 +542,7 @@ Scope {
   }
 
   function sync() {
+    root.forgetRealDesks()
     if (!stackQuery.running) stackQuery.running = true
     root.askAlphas()
     const next = root.liveShot()
@@ -1008,6 +1009,21 @@ Scope {
   property int justAdded: -1
   signal deskAdded(int id, int grew)
   Timer { id: addedSettle; interval: 700; onTriggered: root.justAdded = -1 }
+
+  // Once you have been on an added desktop and left, it is Hyprland's: kept
+  // if something is on it, gone if not, as any other workspace would be.
+  // Likewise once a window has been put on it, which makes it a real one.
+  property int lastDesk: root.focusedDesk
+  onFocusedDeskChanged: {
+    const left = root.lastDesk
+    root.lastDesk = root.focusedDesk
+    if (root.addedDesks.indexOf(left) !== -1) root.addedDesks = root.addedDesks.filter(id => id !== left)
+  }
+  function forgetRealDesks() {
+    const real = (Hyprland.workspaces.values || []).filter(w => w.id > 0).map(w => root.deskOfId(w.id))
+    const kept = root.addedDesks.filter(id => real.indexOf(id) === -1)
+    if (kept.length !== root.addedDesks.length) root.addedDesks = kept
+  }
 
   function addWorkspace(id) {
     if (id <= 0 || id > 10 || root.addedDesks.indexOf(id) !== -1) return
