@@ -1213,7 +1213,9 @@ PanelWindow {
         ShaderEffect {
           anchors.fill: parent
           visible: card.frostedGlass
-          opacity: frame.opacity
+          // Hyprland draws the blur whole under a see-through window unless
+          // told not to; faded with the card, the sharp desktop shows through.
+          opacity: overlay.deco.blurIgnoreOpacity === false ? frame.opacity : 1
           property var source: card.floating ? surface.floatBlurFor(card.modelData.key)
                              : (stage.overStrip ? baseBlur.output : wallBlur.output)
           // Where the card is on screen, scaled about its middle as it is

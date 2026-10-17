@@ -319,6 +319,7 @@ Item {
     blurBrightness: 1,
     blurVibrancy: 0,
     blurVibrancyDarkness: 0,
+    blurIgnoreOpacity: true,
     shadowPower: 1,
     roundingPower: 2,
   })
@@ -331,6 +332,7 @@ Item {
     "decoration:blur:enabled", "decoration:blur:size", "decoration:blur:passes",
     "decoration:blur:noise", "decoration:blur:contrast", "decoration:blur:brightness",
     "decoration:blur:vibrancy", "decoration:blur:vibrancy_darkness",
+    "decoration:blur:ignore_opacity",
     "decoration:shadow:render_power", "decoration:rounding_power",
     "decoration:shadow:offset",
   ]
@@ -373,6 +375,7 @@ Item {
     }
     const shadowOn = byName["decoration:shadow:enabled"]
     const blurOn = byName["decoration:blur:enabled"]
+    const ignoreOpacity = byName["decoration:blur:ignore_opacity"]
     service.deco = {
       rounding: Math.max(0, num("decoration:rounding")),
       border: Math.max(0, num("general:border_size")),
@@ -396,6 +399,9 @@ Item {
       blurBrightness: byName["decoration:blur:brightness"] ? num("decoration:blur:brightness") : 1,
       blurVibrancy: num("decoration:blur:vibrancy"),
       blurVibrancyDarkness: num("decoration:blur:vibrancy_darkness"),
+      // Whether the blur behind a see-through window is see-through too, or
+      // drawn whole under it. Hyprland's default is whole.
+      blurIgnoreOpacity: !ignoreOpacity || ignoreOpacity.bool === true || ignoreOpacity.int === 1,
       shadowPower: Math.max(1, Math.min(4, num("decoration:shadow:render_power") || 1)),
       roundingPower: byName["decoration:rounding_power"] ? num("decoration:rounding_power") : 2,
     }
