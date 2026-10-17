@@ -1594,9 +1594,12 @@ PanelWindow {
     readonly property real step: 18
     readonly property int count: overlay.lanes.length
     readonly property real position: Math.max(0, Math.min(deskDots.count - 1, overlay.stageIndex + overlay.shownSlide))
-    visible: opacity > 0.01 && deskDots.count > 1
-    opacity: deskDots.wanted || dotsLinger.running ? 1 : 0
-    Behavior on opacity { NumberAnimation { duration: deskDots.wanted ? 120 : 220; easing.type: Easing.OutCubic } }
+    // Fades in rising a little, and out sinking back.
+    property real shown: deskDots.wanted || dotsLinger.running ? 1 : 0
+    Behavior on shown { NumberAnimation { duration: deskDots.wanted ? 220 : 260; easing.type: Easing.OutCubic } }
+    visible: deskDots.shown > 0.01 && deskDots.count > 1
+    opacity: deskDots.shown
+    transform: Translate { y: (1 - deskDots.shown) * 10 }
     onWantedChanged: if (!deskDots.wanted) dotsLinger.restart()
     Timer { id: dotsLinger; interval: 450 }
 
