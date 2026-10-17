@@ -1592,8 +1592,16 @@ PanelWindow {
     readonly property bool wanted: surface.following && overlay.deskSliding && !overlay.active
     readonly property real dot: 8
     readonly property real step: 18
-    readonly property int count: overlay.lanes.length
-    readonly property real position: Math.max(0, Math.min(deskDots.count - 1, overlay.stageIndex + overlay.shownSlide))
+    // What it last showed, held while it fades: the overview forgets its
+    // desktops the moment the slide is put away.
+    property var lanes: []
+    property real position: 0
+    readonly property var liveLanes: overlay.lanes
+    readonly property real livePosition: overlay.stageIndex + overlay.shownSlide
+    onLiveLanesChanged: if (deskDots.liveLanes.length > 0) deskDots.lanes = deskDots.liveLanes
+    onLivePositionChanged: if (overlay.stageIndex >= 0 && deskDots.liveLanes.length > 0)
+      deskDots.position = Math.max(0, Math.min(deskDots.liveLanes.length - 1, deskDots.livePosition))
+    readonly property int count: deskDots.lanes.length
     // Fades in rising a little, and out sinking back.
     property real shown: deskDots.wanted || dotsLinger.running ? 1 : 0
     Behavior on shown { NumberAnimation { duration: deskDots.wanted ? 220 : 260; easing.type: Easing.OutCubic } }
@@ -1617,7 +1625,7 @@ PanelWindow {
     }
 
     Repeater {
-      model: overlay.lanes
+      model: deskDots.lanes
       delegate: Rectangle {
         id: laneDot
         required property var modelData
