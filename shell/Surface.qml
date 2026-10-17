@@ -1245,14 +1245,19 @@ PanelWindow {
             property real radius: card.radius
             fragmentShader: Qt.resolvedUrl("deco/clip.frag.qsb")
           }
-          // As see-through as Hyprland draws the window, becoming solid.
-          opacity: card.real.opacity + (1 - card.real.opacity) * overlay.dress
+          // As see-through as Hyprland draws the window, the whole way out:
+          // a card is the window, so it does not turn solid as it spreads.
+          opacity: card.real.opacity
           // Under the capture, so a window whose first frame has not arrived
           // yet reads as a tile and not as a hole — but only as the overview
           // comes in. At the start of a swipe the card sits exactly on its
           // real window, which is still showing, so an empty card should let
           // that window through rather than flash a dark block over it.
-          color: card.frostedGlass ? "transparent"
+          // Not under a see-through window's capture: square, the frame is
+          // not drawn through a layer, so the backing and the capture are
+          // each faded on their own and the one fills in what the other
+          // lets through.
+          color: card.frostedGlass || (shot.hasContent && card.real.opacity < 1) ? "transparent"
                : shot.hasContent ? "#101014" : Qt.rgba(0.063, 0.063, 0.078, overlay.veil)
 
           ScreencopyView {

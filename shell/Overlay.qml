@@ -297,11 +297,12 @@ Scope {
       const rect = root.rectOf(top)
       const mon = top.monitor
       if (!rect || !mon) continue
-      const tags = (top.lastIpcObject || {}).tags || []
-      // Omarchy's default window opacity: 0.985 focused, 0.96 not, for every
-      // window still wearing its tag.
-      const tagged = tags.some(t => String(t).replace(/\*$/, "") === "default-opacity")
       const active = root.isActive(top)
+      // As Hyprland draws it (see `alphas`). Until it has answered, Omarchy's
+      // default: 0.985 focused, 0.96 not, for every window wearing its tag.
+      const alpha = root.alphas[top.address]
+      const tags = (top.lastIpcObject || {}).tags || []
+      const tagged = tags.some(t => String(t).replace(/\*$/, "") === "default-opacity")
       const entry = root.kept(before[top.address], {
         x: rect.x - mon.x,
         y: rect.y - mon.y,
@@ -310,7 +311,7 @@ Scope {
         active: active,
         floating: (top.lastIpcObject || {}).floating === true,
         title: top.title || "",
-        opacity: tagged ? (active ? 0.985 : 0.96) : 1,
+        opacity: alpha ? (active ? alpha.active : alpha.inactive) : (tagged ? (active ? 0.985 : 0.96) : 1),
       })
       if (entry !== before[top.address]) changed = true
       out[top.address] = entry
@@ -494,8 +495,54 @@ Scope {
     }
   }
 
+  // How see-through Hyprland draws each window, by address: { active,
+  // inactive }. A capture is the window's own pixels, solid; the opacity is
+  // put on in the compositor, so the cards have to put it back on themselves.
+  // Asked for rather than guessed from tags: any window rule can set it (a
+  // browser at 0.8, an overlay at 0), and only Hyprland knows the result. A
+  // rule's value multiplies the decoration's unless it is an override.
+  // Asked for each time the overview opens, like `zOrder`.
+  property var alphas: ({})
+  readonly property var alphaProps: ["opacity", "opacity_override", "opacity_inactive", "opacity_inactive_override"]
+  Process {
+    id: alphaQuery
+    property var keys: []
+    stdout: StdioCollector {
+      onStreamFinished: {
+        const answers = text.split("\n\n\n").map(s => { try { return JSON.parse(s) } catch (e) { return null } })
+        const deco = k => answers[k] && typeof answers[k].float === "number" ? answers[k].float : 1
+        const decoActive = deco(0)
+        const decoInactive = deco(1)
+        const out = ({})
+        alphaQuery.keys.forEach((key, i) => {
+          const a = answers.slice(2 + i * 4, 6 + i * 4)
+          // A window that closed meanwhile answers in words, not JSON.
+          if (a.length < 4 || a.some(x => !x)) return
+          const active = Math.max(0, Math.min(1, a[1].opacity_override ? a[0].opacity : a[0].opacity * decoActive))
+          const inactive = Math.max(0, Math.min(1, a[3].opacity_inactive_override ? a[2].opacity_inactive : a[2].opacity_inactive * decoInactive))
+          out[key] = root.kept(root.alphas[key], { active: active, inactive: inactive })
+        })
+        // Only when it changed; see `geo`.
+        const same = Object.keys(out).length === Object.keys(root.alphas).length
+                  && Object.keys(out).every(k => out[k] === root.alphas[k])
+        if (!same) root.alphas = out
+      }
+    }
+  }
+
+  function askAlphas() {
+    if (alphaQuery.running) return
+    const keys = (Hyprland.toplevels.values || []).map(t => t.address)
+    const asks = ["getoption decoration:active_opacity", "getoption decoration:inactive_opacity"]
+    keys.forEach(k => root.alphaProps.forEach(p => asks.push("getprop address:0x" + k + " " + p)))
+    alphaQuery.keys = keys
+    alphaQuery.command = ["/usr/bin/hyprctl", "-j", "--batch", asks.join("; ")]
+    alphaQuery.running = true
+  }
+
   function sync() {
     if (!stackQuery.running) stackQuery.running = true
+    root.askAlphas()
     const next = root.liveShot()
     if (!root.sameWindows(root.shot, next)) {
       root.shot = next
