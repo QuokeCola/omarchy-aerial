@@ -1304,7 +1304,9 @@ PanelWindow {
           }
           // As see-through as Hyprland draws the window, the whole way out:
           // a card is the window, so it does not turn solid as it spreads.
-          opacity: card.real.opacity
+          // Not in `geo` yet (Hyprland has not reported its size): the
+          // snapshot it falls back to carries no opacity.
+          opacity: card.real.opacity ?? 1
           // Under the capture, so a window whose first frame has not arrived
           // yet reads as a tile and not as a hole — but only as the overview
           // comes in. At the start of a swipe the card sits exactly on its
@@ -1320,7 +1322,24 @@ PanelWindow {
           ScreencopyView {
             id: shot
             anchors.fill: parent
-            captureSource: card.modelData.capture
+            captureSource: shot.cut ? null : card.modelData.capture
+            // A capture that fails stays failed: nothing else asks again
+            // (`captureFrame` only runs once there is a frame) and the card
+            // is never rebuilt while its window stays put, so it sat as an
+            // empty tile — and see-through mid-swipe — until the shell
+            // restarted. Dropping the source for a moment starts a fresh one.
+            property bool cut: false
+            property int restarts: 0
+            function restart(why) {
+              if (!card.modelData.capture || shot.restarts >= 5) return
+              shot.restarts++
+              console.warn("aerial-capture restart " + card.modelData.key + " " + card.modelData.appId
+                           + ": " + why + " (#" + shot.restarts + ")")
+              shot.cut = true
+              Qt.callLater(() => shot.cut = false)
+            }
+            onStopped: shot.restart("stopped")
+            onHasContentChanged: if (shot.hasContent) shot.restarts = 0
             // Never quite opaque. A capture is drawn as an opaque texture —
             // copied over what is behind it, alpha and all — and a terminal's
             // see-through background then punches a hole through the
@@ -1346,6 +1365,14 @@ PanelWindow {
             // capture before the overview can appear, and live, the first
             // frame arrives as soon as the compositor can give it.
             live: card.shown && overlay.opened && !shot.hasContent
+          }
+
+          // Failing without saying so: on screen, open, and still no frame.
+          Timer {
+            interval: 1000
+            repeat: true
+            running: card.onScreen && overlay.opened && !shot.hasContent
+            onTriggered: shot.restart("no frame after 1s")
           }
 
           Connections {
