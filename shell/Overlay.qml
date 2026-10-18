@@ -479,22 +479,9 @@ Scope {
   // How Hyprland stacks windows, by address: 0 at the bottom. Focus does not
   // raise a floating window in Hyprland, so the focus history is not the
   // stacking order; the order `hyprctl clients` lists them in is — it is the
-  // order they are drawn in. Asked for each time the overview opens.
+  // order they are drawn in. Asked for each time the overview opens, in the
+  // same call as `alphas`.
   property var zOrder: ({})
-  Process {
-    id: stackQuery
-    command: ["/usr/bin/hyprctl", "clients", "-j"]
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          const out = ({})
-          JSON.parse(text).forEach((c, i) => { out[String(c.address).replace(/^0x/, "")] = i })
-          // Only when it changed; see `geo`.
-          if (root.kept(root.zOrder, out) !== root.zOrder) root.zOrder = out
-        } catch (e) {}
-      }
-    }
-  }
 
   // How see-through Hyprland draws each window, by address: { active,
   // inactive }. A capture is the window's own pixels, solid; the opacity is
@@ -502,7 +489,8 @@ Scope {
   // Asked for rather than guessed from tags: any window rule can set it (a
   // browser at 0.8, an overlay at 0), and only Hyprland knows the result. A
   // rule's value multiplies the decoration's unless it is an override.
-  // Asked for each time the overview opens, like `zOrder`.
+  // Asked for each time the overview opens, along with `zOrder`: one hyprctl
+  // run rather than two.
   property var alphas: ({})
   readonly property var alphaProps: ["opacity", "opacity_override", "opacity_inactive", "opacity_inactive_override"]
   Process {
@@ -511,12 +499,19 @@ Scope {
     stdout: StdioCollector {
       onStreamFinished: {
         const answers = text.split("\n\n\n").map(s => { try { return JSON.parse(s) } catch (e) { return null } })
+        // First, `hyprctl clients`: the order they are drawn in.
+        if (Array.isArray(answers[0])) {
+          const order = ({})
+          answers[0].forEach((c, i) => { order[String(c.address).replace(/^0x/, "")] = i })
+          // Only when it changed; see `geo`.
+          if (root.kept(root.zOrder, order) !== root.zOrder) root.zOrder = order
+        }
         const deco = k => answers[k] && typeof answers[k].float === "number" ? answers[k].float : 1
-        const decoActive = deco(0)
-        const decoInactive = deco(1)
+        const decoActive = deco(1)
+        const decoInactive = deco(2)
         const out = ({})
         alphaQuery.keys.forEach((key, i) => {
-          const a = answers.slice(2 + i * 4, 6 + i * 4)
+          const a = answers.slice(3 + i * 4, 7 + i * 4)
           // A window that closed meanwhile answers in words, not JSON.
           if (a.length < 4 || a.some(x => !x)) return
           const active = Math.max(0, Math.min(1, a[1].opacity_override ? a[0].opacity : a[0].opacity * decoActive))
@@ -534,7 +529,7 @@ Scope {
   function askAlphas() {
     if (alphaQuery.running) return
     const keys = (Hyprland.toplevels.values || []).map(t => t.address)
-    const asks = ["getoption decoration:active_opacity", "getoption decoration:inactive_opacity"]
+    const asks = ["clients", "getoption decoration:active_opacity", "getoption decoration:inactive_opacity"]
     keys.forEach(k => root.alphaProps.forEach(p => asks.push("getprop address:0x" + k + " " + p)))
     alphaQuery.keys = keys
     alphaQuery.command = ["/usr/bin/hyprctl", "-j", "--batch", asks.join("; ")]
@@ -543,7 +538,6 @@ Scope {
 
   function sync() {
     root.forgetRealDesks()
-    if (!stackQuery.running) stackQuery.running = true
     root.askAlphas()
     const next = root.liveShot()
     if (!root.sameWindows(root.shot, next)) {
