@@ -739,7 +739,7 @@ Scope {
 
   // Sliding is for the one-desktop spread. Every window at once, or a search
   // across every desktop, has nothing to slide between.
-  readonly property bool canSlide: (root.active || root.deskSliding) && !root.everything && root.filter === ""
+  readonly property bool canSlide: (root.active || root.deskSliding) && !root.everything && root.filter === "" && root.appOnly === ""
                                    && root.dragKey === "" && root.stageIndex >= 0
   // Sliding on the bare desktop, the overview up at no zoom just for it.
   readonly property bool deskSliding: root.service ? root.service.deskSlide : false
@@ -966,7 +966,10 @@ Scope {
     }
   }
 
+  readonly property string appOnly: root.service ? root.service.appOnly : ""
+
   function matches(win) {
+    if (root.appOnly !== "" && String(win.appId || "").toLowerCase() !== root.appOnly) return false
     if (root.filter === "") return true
     const needle = root.filter.toLowerCase()
     return String(win.title || "").toLowerCase().indexOf(needle) >= 0

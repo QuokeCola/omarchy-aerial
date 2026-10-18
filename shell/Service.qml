@@ -38,6 +38,20 @@ Item {
   // announced on the event socket (custom>>dock-state,<monitor>,<px>), so
   // the desktop dots can sit above it.
   property var dockCovers: ({})
+
+  // One app's windows only, from every desktop, when the overview was opened
+  // for an app (the dock does, on an icon with several windows). Its app id,
+  // lower-cased; "" for the ordinary overview.
+  property string appOnly: ""
+
+  /** Open on one app's windows, from hl.dsp.event("aerial,app:<appId>"). */
+  function showApp(appId) {
+    const id = String(appId || "").toLowerCase()
+    if (id === "" || service.scrub !== "") return
+    service.appOnly = id
+    service.everything = false
+    if (!service.open) service.show()
+  }
   // True once the user has committed: clicks land, keys are grabbed.
   // With a hysteresis: the spring lands with a bounce, and an overview that
   // dipped to 0.98 on the rebound must not drop the keyboard and grab it
@@ -296,6 +310,7 @@ Item {
     // Reset once it is fully away, not while it is still closing, or the
     // spread rearranges itself on the way out.
     service.everything = false
+    service.appOnly = ""
   }
 
   // ------------------------------------------------------------ decoration
@@ -532,6 +547,10 @@ Item {
 
     if (what === "go") {
       service.go(rest)
+      return
+    }
+    if (what === "app") {
+      service.showApp(rest)
       return
     }
 

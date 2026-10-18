@@ -254,7 +254,7 @@ PanelWindow {
   // window you cannot find is, almost by definition, not the one in front of
   // you. So the moment there is something to search for, every desktop is in
   // scope; clear the text and it narrows back to where you are.
-  readonly property bool searching: !overlay.everything && overlay.filter !== ""
+  readonly property bool searching: !overlay.everything && (overlay.filter !== "" || overlay.appOnly !== "")
 
   readonly property var windows: {
     if (overlay.everything || surface.searching) return surface.monitorWindows
@@ -962,6 +962,12 @@ PanelWindow {
         // How many screens over this card's desktop is while sliding.
         readonly property real lane: surface.following ? overlay.laneOf(overlay.wsOf(card.modelData)) : 0
         readonly property real shift: surface.sliding ? card.lane * surface.width : 0
+        // Searching or showing one app's windows, cards from every desktop
+        // share the spread, but closing lands on one desktop. The others leave
+        // toward their own desktop's side as the overview closes (and come in
+        // from it as it opens) instead of flying home over the wrong desktop.
+        readonly property real awayLane: surface.searching && surface.following
+                                         ? Math.max(-2, Math.min(2, card.lane)) : 0
         readonly property bool shown: card.here && overlay.matches(card.modelData)
         readonly property bool hovered: hover.hovered && overlay.active
         readonly property bool picked: card.hovered || overlay.selectedKey === card.modelData.key
@@ -1116,6 +1122,7 @@ PanelWindow {
         readonly property real homeX: surface.snap((card.slot ? card.real.x + (card.slot.x - card.real.x) * card.along : card.real.x)
            + card.baseW * (1 - card.squeeze) / 2
            + card.shift
+           + card.awayLane * surface.width * (1 - card.along)
            + (card.dragging ? dragger.activeTranslation.x + (card.grabX - card.homeW / 2) * card.centering : 0))
         readonly property real homeY: surface.snap((card.slot ? card.real.y + (card.slot.y - card.real.y) * card.along : card.real.y)
            + card.baseH * (1 - card.squeeze) / 2
@@ -1557,7 +1564,7 @@ PanelWindow {
     Rectangle {
       anchors.horizontalCenter: parent.horizontalCenter
       y: surface.stripHeight + 14
-      visible: surface.leading && overlay.filter !== ""
+      visible: surface.leading && (overlay.filter !== "" || overlay.appOnly !== "")
       width: query.implicitWidth + 34
       height: query.implicitHeight + 20
       radius: height / 2
@@ -1572,7 +1579,13 @@ PanelWindow {
         textFormat: Text.PlainText
         id: query
         anchors.centerIn: parent
-        text: overlay.filter + "   " + surface.shownWindows.length
+        // Opened for one app: its name stands where the typing would.
+        readonly property string appName: {
+          if (overlay.appOnly === "") return ""
+          const entry = DesktopEntries.heuristicLookup(overlay.appOnly)
+          return entry && entry.name ? entry.name : overlay.appOnly
+        }
+        text: (overlay.filter !== "" ? overlay.filter : appName) + "   " + surface.shownWindows.length
               + (surface.shownWindows.length === 1 ? " window" : " windows")
         color: surface.shownWindows.length === 0 ? "#D2604F" : "#F2EFE7"
         font.family: Style.font.family
