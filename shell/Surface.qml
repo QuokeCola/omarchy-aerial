@@ -961,7 +961,7 @@ PanelWindow {
                                                          : overlay.wsOf(card.modelData) === surface.shownWorkspace)
         // How many screens over this card's desktop is while sliding.
         readonly property real lane: surface.following ? overlay.laneOf(overlay.wsOf(card.modelData)) : 0
-        readonly property real shift: surface.sliding ? card.lane * surface.width : 0
+        readonly property real shift: surface.sliding && card.tracking ? card.lane * surface.width : 0
         // Searching or showing one app's windows, cards from every desktop
         // share the spread, but closing lands on one desktop. The others leave
         // toward their own desktop's side as the overview closes (and come in
@@ -995,8 +995,14 @@ PanelWindow {
         // its own middle and drifting up toward the strip, rather than
         // carrying on along the same line, which would shrink a big window
         // with a small slot to nothing.
-        readonly property real along: Math.min(1, overlay.t)
-        readonly property real beyond: Math.max(0, overlay.t - 1)
+        // Only for a card that can be seen. The rest would otherwise work out
+        // their whole place again every frame of a swipe, for nothing; held
+        // at open, they pick `t` back up the moment they matter, and their
+        // place never eases there (see the Behaviors on x/y: off while `t`
+        // is moving).
+        readonly property bool tracking: card.shown || card.fading || card.flying || card.opacity > 0.01
+        readonly property real along: card.tracking ? Math.min(1, overlay.t) : 1
+        readonly property real beyond: card.tracking ? Math.max(0, overlay.t - 1) : 0
         readonly property real squeeze: 1 - card.beyond * 0.7
         // The window's own size, in the pixels its buffer actually has when
         // that is within a pixel or two of what Hyprland reports: drawn at
