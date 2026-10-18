@@ -1614,7 +1614,12 @@ PanelWindow {
     width: deskDots.count * deskDots.step + 16
     height: 30
     x: (surface.width - width) / 2
-    y: surface.height - height - 64
+    // Above a dock along the bottom edge, when one says it is there.
+    readonly property real dockCover: overlay.service && overlay.service.dockCovers
+                                      ? (overlay.service.dockCovers[surface.monitorName] || 0) : 0
+    property real lift: Math.max(64, deskDots.dockCover + 14)
+    Behavior on lift { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+    y: surface.height - height - deskDots.lift
 
     Rectangle {
       anchors.fill: parent

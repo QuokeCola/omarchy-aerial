@@ -33,6 +33,11 @@ Item {
   // way it does when the overview is open. See `deskSwipe` below for why
   // this is the plugin's to do rather than Hyprland's.
   property bool deskSlide: false
+
+  // How much of each screen's bottom edge a dock covers, by monitor name, as
+  // announced on the event socket (custom>>dock-state,<monitor>,<px>), so
+  // the desktop dots can sit above it.
+  property var dockCovers: ({})
   // True once the user has committed: clicks land, keys are grabbed.
   // With a hysteresis: the spring lands with a bounce, and an overview that
   // dipped to 0.98 on the rebound must not drop the keyboard and grab it
@@ -688,6 +693,13 @@ Item {
       }
       if (name === "custom" && data.startsWith("aerial,")) {
         service.onGesture(data.slice(7))
+        return
+      }
+      if (name === "custom" && data.startsWith("dock-state,")) {
+        const parts = data.split(",")
+        const next = Object.assign({}, service.dockCovers)
+        next[parts[1]] = Math.max(0, Number(parts[2]) || 0)
+        service.dockCovers = next
         return
       }
 
