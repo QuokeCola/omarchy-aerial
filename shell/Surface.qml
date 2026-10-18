@@ -358,8 +358,30 @@ PanelWindow {
     return ""
   }
 
+  // The last `slots`, so that what has not moved is handed back as the very
+  // object it was (see `geo` in Overlay.qml): a card whose slot is the same
+  // object is not worked out again.
+  readonly property var slotMemo: ({ slots: ({}) })
+
+  /** `fresh`, keeping each slot that has not changed — and the whole of the
+      last answer if none has. */
+  function keptSlots(fresh) {
+    const before = surface.slotMemo.slots
+    let changed = false
+    let count = 0
+    const out = ({})
+    for (const key in fresh) {
+      out[key] = overlay.kept(before[key], fresh[key])
+      if (out[key] !== before[key]) changed = true
+      count++
+    }
+    if (!changed && count === Object.keys(before).length) return before
+    surface.slotMemo.slots = out
+    return out
+  }
+
   readonly property var slots: {
-    if (surface.matching.length === 0 || surface.width <= 0) return ({})
+    if (surface.matching.length === 0 || surface.width <= 0) return surface.keptSlots(({}))
     const area = {
       width: surface.width - surface.padding * 2,
       height: surface.height - surface.stripHeight - surface.padding * 2,
@@ -381,7 +403,7 @@ PanelWindow {
           h: slot.h,
         }
       }
-      return byKey
+      return surface.keptSlots(byKey)
     }
 
     if (!overlay.everything) {
@@ -406,7 +428,7 @@ PanelWindow {
           }
         }
       }
-      return byKey
+      return surface.keptSlots(byKey)
     }
 
     // Every window on this screen, kept in its workspace's own column so the
@@ -422,7 +444,7 @@ PanelWindow {
         }
       }
     }
-    return byKey
+    return surface.keptSlots(byKey)
   }
 
   readonly property var columnLabels: {
