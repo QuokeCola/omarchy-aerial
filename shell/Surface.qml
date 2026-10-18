@@ -1224,7 +1224,10 @@ PanelWindow {
         // that is still dissolving as it goes reads as lag.
         // Nor a card parked in a tile when its flight ends: faded from where
         // it stood, it showed the window back on its old desktop for a moment.
-        Behavior on opacity { enabled: !surface.sliding && !card.parked; NumberAnimation { duration: 150 } }
+        // Nor one fading with the overview: that follows `t` every frame, and a
+        // Behavior restarted every frame never leaves where it started — the
+        // window popped in whole once the overview had gone.
+        Behavior on opacity { enabled: !surface.sliding && !card.parked && !card.fading; NumberAnimation { duration: 150 } }
 
         // Hyprland's rounding on the desktop, the overview's own once spread,
         // never rounder than Hyprland's.
