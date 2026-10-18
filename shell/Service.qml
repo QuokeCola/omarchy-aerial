@@ -94,6 +94,23 @@ Item {
   // A shortcut asked for the next (+1) or previous (-1) desktop. The overlay
   // slides there the way a swipe would, overview open or not.
   signal stepRequested(int step)
+  // Slide to the desktop a window is on, however far, and focus it there.
+  signal jumpRequested(string address)
+
+  /** From hl.dsp.event("aerial,goto:<address>") — the dock sends it when you
+      click an app whose one window is on another desktop. */
+  function gotoWindow(address) {
+    const key = String(address || "").replace(/^0x/, "")
+    if (key === "") return
+    if (!service.open) {
+      if (service.showing || service.scrub !== "") return
+      service.deskSlide = true
+      service.aim()
+      service.arming()
+      service.refreshModels()
+    }
+    service.jumpRequested(key)
+  }
 
   /** Slide one desktop over, from a key. Bound in Hyprland as
       hl.dsp.event("aerial,go:next") or "aerial,go:prev", which reaches here
@@ -551,6 +568,10 @@ Item {
     }
     if (what === "app") {
       service.showApp(rest)
+      return
+    }
+    if (what === "goto") {
+      service.gotoWindow(rest)
       return
     }
 
