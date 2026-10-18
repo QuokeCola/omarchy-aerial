@@ -966,9 +966,20 @@ PanelWindow {
         // share the spread, but closing lands on one desktop. The others leave
         // toward their own desktop's side as the overview closes (and come in
         // from it as it opens) instead of flying home over the wrong desktop.
+        // In screen widths: one screen off the side its desktop is on (enough
+        // to be fully out of view when closed), a little further for each
+        // desktop further away, so two desktops' windows don't arrive as one
+        // clump yet are in view for most of the move. One not on this
+        // screen's strip stays put.
         readonly property real awayLane: surface.searching && surface.following
-                                         ? Math.max(-2, Math.min(2, card.lane)) : 0
+                                         && Math.abs(card.lane) >= 0.5 && Math.abs(card.lane) < 10
+                                         ? Math.sign(card.lane) * (0.85 + 0.15 * Math.min(3, Math.abs(card.lane))) : 0
         readonly property bool shown: card.here && overlay.matches(card.modelData)
+        // Opened on one app: the other windows of the desktop you are on fade
+        // out where they stand as the overview opens (and back in if it closes
+        // onto this desktop), rather than vanishing the moment it starts.
+        readonly property bool fading: !card.shown && overlay.appOnly !== ""
+                                       && overlay.wsOf(card.modelData) === surface.shownWorkspace
         readonly property bool hovered: hover.hovered && overlay.active
         readonly property bool picked: card.hovered || overlay.selectedKey === card.modelData.key
         readonly property bool dragging: dragger.active
@@ -1163,6 +1174,7 @@ PanelWindow {
 
         // Floating cards stack as their windows do; see `floatStack`.
         z: card.dragging || card.flying ? 100
+           : card.fading ? 0
            : (card.floating ? 1 + surface.floatStack.indexOf(card.modelData.key) : (card.picked ? 2 : 1))
         // Held, it shrinks the way a thing you have picked up does — and
         // shrinks further over somewhere it would land, so it stops covering
@@ -1173,7 +1185,9 @@ PanelWindow {
         scale: card.flying ? 1
              : card.dragging ? (overlay.dragTarget > 0 ? card.tileScale : (overlay.dropOnKey !== "" ? 0.4 : 0.82))
              : (card.picked && overlay.active ? 1.035 : 1)
-        opacity: card.flying ? overlay.veil : (card.shown ? (card.dragging ? 0.94 : 1) : 0)
+        opacity: card.flying ? overlay.veil
+               : card.shown ? (card.dragging ? 0.94 : 1)
+               : card.fading ? Math.max(0, 1 - card.along * 2.5) : 0
         visible: card.opacity > 0.01
         // Not as it takes off: the card swaps its shrink for its size in the
         // same frame, and animating one of them would show the seam.
@@ -1343,7 +1357,7 @@ PanelWindow {
             // gets a warning back.
             function onBeatChanged() {
               if (!shot.hasContent) return
-              if (card.shown || card.flying || (overlay.priming && Math.abs(card.lane) < 1.5)) shot.captureFrame()
+              if (card.shown || card.flying || card.fading || (overlay.priming && Math.abs(card.lane) < 1.5)) shot.captureFrame()
             }
           }
 
