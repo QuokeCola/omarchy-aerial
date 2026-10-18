@@ -1542,6 +1542,7 @@ PanelWindow {
         // photograph — with the app's own icon, because at thumbnail size the
         // icon is what you recognise before you have read anything.
         Rectangle {
+          id: captionPill
           anchors.horizontalCenter: parent.horizontalCenter
           anchors.top: parent.bottom
           anchors.topMargin: 10
@@ -1594,7 +1595,11 @@ PanelWindow {
               textFormat: Text.PlainText
               anchors.verticalCenter: parent.verticalCenter
               width: Math.min(implicitWidth, card.width - 40)
-              text: card.real.title !== undefined ? card.real.title : card.modelData.title
+              // Live while it can be seen, from the window itself; not
+              // listening otherwise, so a retitle with the overview put away
+              // costs nothing.
+              text: captionPill.opacity > 0 && card.real !== card.modelData
+                    ? ((card.modelData.top && card.modelData.top.title) || "") : card.modelData.title
               elide: Text.ElideRight
               color: card.picked ? "#F7F4EC" : "#C9C3B9"
               font.family: Style.font.family

@@ -249,6 +249,11 @@ Scope {
         // The capture handle, not Hyprland's wrapper: ScreencopyView wants the
         // Wayland toplevel, and paints nothing at all if given anything else.
         capture: top.wayland,
+        // Hyprland's own, for the caption's live title (see Surface.qml):
+        // `geo` leaves the title out, so a window retitling itself — a
+        // terminal, every keystroke — does not run it, or anything drawn
+        // from it, again.
+        top: top,
         title: top.title || "",
         appId: rect.appId,
         workspace: top.workspace.id,
@@ -310,7 +315,6 @@ Scope {
         h: rect.h,
         active: active,
         floating: (top.lastIpcObject || {}).floating === true,
-        title: top.title || "",
         opacity: alpha ? (active ? alpha.active : alpha.inactive) : (tagged ? (active ? 0.985 : 0.96) : 1),
       })
       if (entry !== before[top.address]) changed = true
