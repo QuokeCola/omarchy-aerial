@@ -85,7 +85,8 @@ omarchy-restart-shell
 ```
 
 The three-finger gestures work immediately — the plugin registers them with
-Hyprland when the shell starts, and again after a config reload.
+Hyprland when the shell starts, and again after a config reload — including one
+that slips past unannounced while the session is still settling at login.
 
 ## Settings
 

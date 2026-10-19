@@ -274,6 +274,31 @@ Item {
       }
       service.sidewaysSent = ""
       service.sendSideways()
+      service.checksLeft = 5
+      check.restart()
+    }
+  }
+
+  // Whether the gestures are still there, a few times after each registration.
+  // At login a monitor daemon rewrites monitors.lua, and the autoreload that
+  // follows can land after our eval without its `configreloaded` reaching us:
+  // nothing would ever register again. So ask the Lua state itself, which
+  // forgets the flag gesture.lua sets the moment it forgets the gestures.
+  property int checksLeft: 0
+
+  Timer {
+    id: check
+    interval: 2000
+    onTriggered: if (!lua.running && !probe.running) probe.running = true
+  }
+
+  Process {
+    id: probe
+    command: ["/usr/bin/hyprctl", "eval",
+              'if not _G.__aerial_registered then error("aerial: gestures gone") end']
+    onExited: (code) => {
+      if (code !== 0) service.registerGesture()
+      else if (--service.checksLeft > 0) check.restart()
     }
   }
 
