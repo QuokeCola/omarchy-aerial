@@ -459,6 +459,11 @@ Scope {
       const y = byKey[x.key]
       if (!y || root.spaceOf(x) !== y.workspace || x.monitor !== y.monitor || x.floating !== y.floating)
         return false
+      // Same address, new Wayland toplevel: a window hidden and shown again
+      // (Zoom's meeting window around a screen share) keeps its address but
+      // gets a new handle, and the old one reads null once it is gone. Kept,
+      // that card captures nothing for the rest of the session.
+      if (x.capture !== y.capture) return false
     }
     return true
   }
