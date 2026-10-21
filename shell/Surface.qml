@@ -140,6 +140,8 @@ PanelWindow {
   // then it appears already following the fingers. Never longer than
   // `giveUp`, whatever does not arrive.
   property bool ready: false
+  // Cards that once held the overview back the whole of `giveUp`, by key.
+  property var missed: ({})
   readonly property bool canShow: overlay.opened && surface.captured
                                   && (overlay.wallpaper === "" || solid.status === Image.Ready)
   // Counted in presented frames, not guessed with a timer. The cards still
@@ -173,7 +175,19 @@ PanelWindow {
     id: giveUp
     interval: 250
     running: overlay.opened && !surface.ready
-    onTriggered: surface.ready = true
+    onTriggered: {
+      // Whatever kept it waiting this time is not waited for again until it
+      // has shown a frame: some windows never give the shell one (Zoom's
+      // meeting window, under XWayland), and each swipe past them stalled.
+      const missed = Object.assign({}, surface.missed)
+      for (const list of [tiledCards, floatCards])
+        for (let i = 0; i < list.count; i++) {
+          const c = list.itemAt(i)
+          if (c && c.waiting) missed[c.modelData.key] = true
+        }
+      surface.missed = missed
+      surface.ready = true
+    }
   }
 
   // The screen swiped on decides when the overview starts to move.
@@ -974,7 +988,7 @@ PanelWindow {
         readonly property bool onScreen: card.shown
                                          && card.real.x < surface.width && card.real.x + card.real.w > 0
                                          && card.real.y < surface.height && card.real.y + card.real.h > 0
-        readonly property bool waiting: card.onScreen && !shot.hasContent
+        readonly property bool waiting: card.onScreen && !shot.hasContent && !surface.missed[card.modelData.key]
         readonly property var slot: surface.slots[card.modelData.key] || null
         // On the desktop being shown, which peeking changes without rebuilding
         // anything: the card is already here, it just fades in.
@@ -1370,7 +1384,14 @@ PanelWindow {
               Qt.callLater(() => shot.cut = false)
             }
             onStopped: shot.restart("stopped")
-            onHasContentChanged: if (shot.hasContent) shot.restarts = 0
+            onHasContentChanged: if (shot.hasContent) {
+              shot.restarts = 0
+              if (surface.missed[card.modelData.key]) {
+                const missed = Object.assign({}, surface.missed)
+                delete missed[card.modelData.key]
+                surface.missed = missed
+              }
+            }
             // Never quite opaque. A capture is drawn as an opaque texture —
             // copied over what is behind it, alpha and all — and a terminal's
             // see-through background then punches a hole through the
