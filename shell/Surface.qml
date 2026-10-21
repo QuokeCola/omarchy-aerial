@@ -5,6 +5,7 @@ import Quickshell.Wayland
 import Quickshell.Hyprland
 import Quickshell.Widgets
 import qs.Commons
+import qs.Commons as Commons
 import "../app/Layout.js" as Layout
 
 // One screen's worth of overview.
@@ -792,7 +793,7 @@ PanelWindow {
             radius: surface.rounded(8)
             color: "transparent"
             border.width: 2
-            border.color: Color.accent
+            border.color: Commons.Color.accent
             Behavior on x { enabled: !overlay.moving; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
           }
         }
@@ -1458,7 +1459,7 @@ PanelWindow {
           // In a tile it is a miniature, not a card you can pick: the tile's
           // own hairline is the only outline.
           border.width: card.flying ? 0 : (card.landing ? 3 : (card.picked ? 3 : 1))
-          border.color: card.landing ? "#F2EFE7" : (card.picked ? Color.accent : Qt.rgba(1, 1, 1, 0.14))
+          border.color: card.landing ? "#F2EFE7" : (card.picked ? Commons.Color.accent : Qt.rgba(1, 1, 1, 0.14))
           opacity: overlay.dress
         }
 
@@ -1767,7 +1768,7 @@ PanelWindow {
       radius: surface.rounded(width / 2)
       color: "transparent"
       border.width: 2
-      border.color: Color.accent
+      border.color: Commons.Color.accent
     }
   }
 }

@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "../app/Shortcuts.js" as Shortcuts
 
@@ -377,7 +378,7 @@ Panel {
               color: row.listening ? Style.selectedFill
                    : (rowMouse.containsMouse ? Style.hoverFill : "transparent")
               border.width: row.listening ? 1 : 0
-              border.color: Color.accent
+              border.color: Commons.Color.accent
 
               Text {
                 textFormat: Text.PlainText
@@ -397,7 +398,7 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 text: row.listening ? "Press keys…  (Esc to cancel)"
                       : (row.combo !== "" ? row.combo : "Not set")
-                color: row.listening ? Color.accent
+                color: row.listening ? Commons.Color.accent
                        : (row.clashes.some(c => c.ours) ? root.bar.urgent : root.bar.foreground)
                 opacity: row.combo === "" && !row.listening ? 0.5 : 1
                 font.family: root.bar.fontFamily
@@ -494,7 +495,7 @@ Panel {
             enabled: root.dirty && !root.blocked && root.recordingId === ""
             opacity: enabled ? 1 : 0.4
             foreground: root.bar.foreground
-            accent: Color.accent
+            accent: Commons.Color.accent
             selected: enabled
             fontFamily: root.bar.fontFamily
             onClicked: root.save()
